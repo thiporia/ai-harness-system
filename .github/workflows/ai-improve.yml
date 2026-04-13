@@ -20,7 +20,7 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Run AI सुधार
+      - name: Run AI 실행
         run: node scripts/ai-improve.js
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

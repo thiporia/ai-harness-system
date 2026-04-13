@@ -94,12 +94,30 @@ async function callGemini(codebase) {
 }
 
 async function run() {
-  const files = fs.readdirSync("./src");
+  const collectFiles = (dir) => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const results = [];
+
+    for (const entry of entries) {
+      const fullPath = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        results.push(...collectFiles(fullPath));
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith(".ts")) {
+        results.push(fullPath);
+      }
+    }
+
+    return results;
+  };
+
+  const files = collectFiles("./src");
 
   let codebase = "";
 
   for (const f of files) {
-    const content = fs.readFileSync(`./src/${f}`, "utf-8");
+    const content = fs.readFileSync(f, "utf-8");
     codebase += `\n// FILE: ${f}\n${content}`;
   }
 
