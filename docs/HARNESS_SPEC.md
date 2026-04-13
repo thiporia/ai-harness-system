@@ -61,6 +61,8 @@ Planner는 반드시 아래 항목을 포함해 계획을 수립한다.
     - `docs/artifacts/history/<run-id>-plan.md`
     - `docs/artifacts/history/<run-id>-design.md`
   - 문서 내부는 JSON code block 형태로 기록한다.
+  - 문서는 한국어 기준으로 사람이 읽기 쉽게 요약을 먼저 제공한다.
+  - 원본 JSON은 문서 하단에 그대로 병기하여 추적 가능성을 유지한다.
 
 ## Quality Gates
 

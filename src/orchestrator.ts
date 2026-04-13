@@ -3,12 +3,12 @@ import fs from "fs";
 import { spawnSync } from "node:child_process";
 
 interface Plan {
-  features: string[];
-  acceptance_tests: string[];
+  features: unknown[];
+  acceptance_tests: unknown[];
 }
 
 interface Design {
-  components: Array<{ name: string; props: string[] }>;
+  components: Array<{ name?: string; props?: unknown[] }>;
 }
 
 interface TestResult {
@@ -42,25 +42,80 @@ function persistPlanningDocs(input: string, plan: Plan, design: Design) {
     input,
     created_at: new Date().toISOString()
   };
-  const planMd = `# Planner Result
+  const toText = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+  const planFeatures = Array.isArray(plan.features) ? plan.features : [];
+  const planTests = Array.isArray(plan.acceptance_tests) ? plan.acceptance_tests : [];
+  const designComponents = Array.isArray(design.components) ? design.components : [];
+
+  const planFeatureLines = planFeatures
+    .map((item, idx) => {
+      if (item && typeof item === "object") {
+        const name = "name" in item ? toText((item as { name?: unknown }).name) : `기능 ${idx + 1}`;
+        const desc =
+          "description" in item ? toText((item as { description?: unknown }).description) : "";
+        return `- ${name}${desc ? `: ${desc}` : ""}`;
+      }
+      return `- ${toText(item)}`;
+    })
+    .join("\n");
+
+  const planTestLines = planTests
+    .map((item, idx) => {
+      if (item && typeof item === "object") {
+        const feature =
+          "feature" in item ? toText((item as { feature?: unknown }).feature) : `시나리오 ${idx + 1}`;
+        const tests = "tests" in item ? (item as { tests?: unknown }).tests : undefined;
+        if (Array.isArray(tests)) {
+          const nested = tests.map((t) => `  - ${toText(t)}`).join("\n");
+          return `- ${feature}\n${nested}`;
+        }
+        return `- ${feature}`;
+      }
+      return `- ${toText(item)}`;
+    })
+    .join("\n");
+
+  const designLines = designComponents
+    .map((component, idx) => {
+      const name = component?.name ? toText(component.name) : `컴포넌트 ${idx + 1}`;
+      const props = Array.isArray(component?.props) ? component.props : [];
+      const propLines = props.map((p) => `  - ${toText(p)}`).join("\n");
+      return `- ${name}${propLines ? `\n${propLines}` : ""}`;
+    })
+    .join("\n");
+
+  const planMd = `# Planner 결과 문서
 
 - run_id: ${metadata.run_id}
 - created_at: ${metadata.created_at}
 - input: ${metadata.input}
 
-## JSON
+## 한국어 요약
+
+### 주요 기능
+${planFeatureLines || "- (없음)"}
+
+### 수용 테스트(검증 기준)
+${planTestLines || "- (없음)"}
+
+## 원본 JSON
 
 \`\`\`json
 ${JSON.stringify(plan, null, 2)}
 \`\`\`
 `;
-  const designMd = `# Designer Result
+  const designMd = `# Designer 결과 문서
 
 - run_id: ${metadata.run_id}
 - created_at: ${metadata.created_at}
 - input: ${metadata.input}
 
-## JSON
+## 한국어 요약
+
+### 컴포넌트 구성
+${designLines || "- (없음)"}
+
+## 원본 JSON
 
 \`\`\`json
 ${JSON.stringify(design, null, 2)}
