@@ -1,4 +1,4 @@
-﻿import { planner, designer, developer, tester, reviewer } from "./agents/index.js";
+import { planner, designer, developer, tester, reviewer } from "./agents/index.js";
 
 interface Plan {
   features: string[];
@@ -76,7 +76,7 @@ async function executeDevelopmentLoop(
   return success;
 }
 
-async function runOrchestrator(input: string = DEFAULT_APP_INPUT) {
+async function runOrchestrator(input: string = DEFAULT_APP_INPUT): Promise<void> {
   try {
     const plan = await executePlanningStage(input);
     const design = await executeDesigningStage(plan);
@@ -92,7 +92,7 @@ async function runOrchestrator(input: string = DEFAULT_APP_INPUT) {
       console.log("\nOrchestration Halted: Application failed to build within retries.");
     }
   } catch (error) {
-    console.error("\nOrchestration Error:", error);
+    console.error("\nOrchestration Error:", error instanceof Error ? error.message : error);
   }
 }
 

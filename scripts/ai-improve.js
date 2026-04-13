@@ -2,7 +2,7 @@ import fs from "fs";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const provider = (process.env.LLM_PROVIDER || "openai").toLowerCase();
 const openAIModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
