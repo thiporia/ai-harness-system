@@ -53,6 +53,14 @@ Planner는 반드시 아래 항목을 포함해 계획을 수립한다.
 - 자동 버전업 가능한 빌드 경로를 제공해야 한다.
 - 작업 단위별로 커밋 기록을 남기는 것을 기본 정책으로 한다.
 - 변경 사항이 있으면 README와 Release Note를 갱신한다.
+- Planner/Designer JSON 결과는 문서 아티팩트로 반드시 저장한다.
+  - Latest:
+    - `docs/artifacts/latest-plan.md`
+    - `docs/artifacts/latest-design.md`
+  - History:
+    - `docs/artifacts/history/<run-id>-plan.md`
+    - `docs/artifacts/history/<run-id>-design.md`
+  - 문서 내부는 JSON code block 형태로 기록한다.
 
 ## Quality Gates
 
@@ -64,4 +72,3 @@ Planner는 반드시 아래 항목을 포함해 계획을 수립한다.
 4. 출력 형식 계약(JSON/코드) 충족
 
 하나라도 실패하면 미완료 처리한다.
-

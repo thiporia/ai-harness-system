@@ -22,6 +22,7 @@
   - `HARNESS_PRINCIPLES` + `HARNESS_SPEC`를 함께 참조하도록 변경
 - `orchestrator.ts`
   - 품질 게이트(build/dist/test) 실행 단계 추가
+  - Planner/Designer JSON을 `docs/artifacts`에 MD(latest+history) 형태로 기록
 - `package.json`
   - `version:bump`, `build:versioned` 스크립트 추가
 
@@ -29,4 +30,3 @@
 
 - 테스트 스크립트가 기본 placeholder인 경우 테스트 게이트는 skip 처리됨.
 - 실제 테스트 도입 시 자동으로 품질 게이트에 포함됨.
-

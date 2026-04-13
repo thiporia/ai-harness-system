@@ -28,6 +28,68 @@ interface QualityGateResult {
 
 const MAX_DEVELOPMENT_RETRIES = 5;
 const DEFAULT_APP_INPUT = "React Todo App with CRUD";
+const DOC_ARTIFACTS_DIR = "./docs/artifacts";
+
+function getRunId() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function persistPlanningDocs(input: string, plan: Plan, design: Design) {
+  const runId = getRunId();
+  const historyDir = `${DOC_ARTIFACTS_DIR}/history`;
+  const metadata = {
+    run_id: runId,
+    input,
+    created_at: new Date().toISOString()
+  };
+  const planMd = `# Planner Result
+
+- run_id: ${metadata.run_id}
+- created_at: ${metadata.created_at}
+- input: ${metadata.input}
+
+## JSON
+
+\`\`\`json
+${JSON.stringify(plan, null, 2)}
+\`\`\`
+`;
+  const designMd = `# Designer Result
+
+- run_id: ${metadata.run_id}
+- created_at: ${metadata.created_at}
+- input: ${metadata.input}
+
+## JSON
+
+\`\`\`json
+${JSON.stringify(design, null, 2)}
+\`\`\`
+`;
+
+  fs.mkdirSync(historyDir, { recursive: true });
+
+  fs.writeFileSync(
+    `${DOC_ARTIFACTS_DIR}/latest-plan.md`,
+    planMd,
+    "utf-8"
+  );
+  fs.writeFileSync(
+    `${DOC_ARTIFACTS_DIR}/latest-design.md`,
+    designMd,
+    "utf-8"
+  );
+  fs.writeFileSync(
+    `${historyDir}/${runId}-plan.md`,
+    planMd,
+    "utf-8"
+  );
+  fs.writeFileSync(
+    `${historyDir}/${runId}-design.md`,
+    designMd,
+    "utf-8"
+  );
+}
 
 async function executePlanningStage(input: string): Promise<Plan> {
   console.log("Planning...");
@@ -131,6 +193,8 @@ async function runOrchestrator(input: string = DEFAULT_APP_INPUT): Promise<void>
   try {
     const plan = await executePlanningStage(input);
     const design = await executeDesigningStage(plan);
+    persistPlanningDocs(input, plan, design);
+    console.log(`Planning documents saved under ${DOC_ARTIFACTS_DIR}`);
     const developmentSuccessful = await executeDevelopmentLoop(
       plan,
       design,
