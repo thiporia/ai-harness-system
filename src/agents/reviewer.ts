@@ -1,14 +1,14 @@
 import { callLLM } from "../utils/openai.js";
-import { getHarnessPrinciples } from "../utils/harness-principles.js";
+import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
 
 export async function reviewer(logs: string) {
-  const principles = getHarnessPrinciples();
+  const context = getHarnessContext();
   const res = await callLLM(
     `You analyze errors and suggest fixes.
 
-Apply these harness engineering principles:
-${principles}`,
+Apply this harness context:
+${context}`,
     `
 Error:
 ${logs}

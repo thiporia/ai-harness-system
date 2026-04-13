@@ -4,9 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "version:bump": "node scripts/bump-version.js",
     "build": "tsc -p tsconfig.json",
+    "build:versioned": "npm run version:bump && npm run build",
     "start": "node dist/orchestrator.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run --pool=threads --maxWorkers=1",
+    "test:watch": "vitest --pool=threads --maxWorkers=1"
   },
   "repository": {
     "type": "git",
@@ -23,11 +26,11 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "openai": "^6.34.0",
-    "vitest": "^4.1.4"
+    "openai": "^6.34.0"
   }
 }

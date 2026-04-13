@@ -1,4 +1,6 @@
 import { planner, designer, developer, tester, reviewer } from "./agents/index.js";
+import fs from "fs";
+import { spawnSync } from "node:child_process";
 
 interface Plan {
   features: string[];
@@ -17,6 +19,11 @@ interface TestResult {
 interface ReviewAnalysis {
   issue: string;
   fix: string;
+}
+
+interface QualityGateResult {
+  success: boolean;
+  logs: string;
 }
 
 const MAX_DEVELOPMENT_RETRIES = 5;
@@ -76,6 +83,50 @@ async function executeDevelopmentLoop(
   return success;
 }
 
+function runCommand(command: string, args: string[]) {
+  return spawnSync(command, args, {
+    encoding: "utf-8",
+    stdio: "pipe"
+  });
+}
+
+function runQualityGates(): QualityGateResult {
+  const logs: string[] = [];
+
+  const build = runCommand("npm", ["run", "build"]);
+  logs.push(`[build:status] ${build.status}`);
+  if (build.stdout) logs.push(build.stdout);
+  if (build.stderr) logs.push(build.stderr);
+  if (build.status !== 0) {
+    return { success: false, logs: logs.join("\n") };
+  }
+
+  const hasDist = fs.existsSync("./dist/orchestrator.js");
+  logs.push(`[dist] ${hasDist ? "found" : "missing"} ./dist/orchestrator.js`);
+  if (!hasDist) {
+    return { success: false, logs: logs.join("\n") };
+  }
+
+  const packageJson = JSON.parse(fs.readFileSync("./package.json", "utf-8")) as {
+    scripts?: Record<string, string>;
+  };
+  const testScript = packageJson.scripts?.test || "";
+  const isPlaceholder = testScript.includes("no test specified");
+  if (!isPlaceholder) {
+    const test = runCommand("npm", ["run", "test"]);
+    logs.push(`[test:status] ${test.status}`);
+    if (test.stdout) logs.push(test.stdout);
+    if (test.stderr) logs.push(test.stderr);
+    if (test.status !== 0) {
+      return { success: false, logs: logs.join("\n") };
+    }
+  } else {
+    logs.push("[test] skipped placeholder test script");
+  }
+
+  return { success: true, logs: logs.join("\n") };
+}
+
 async function runOrchestrator(input: string = DEFAULT_APP_INPUT): Promise<void> {
   try {
     const plan = await executePlanningStage(input);
@@ -87,6 +138,12 @@ async function runOrchestrator(input: string = DEFAULT_APP_INPUT): Promise<void>
     );
 
     if (developmentSuccessful) {
+      const qualityGate = runQualityGates();
+      if (!qualityGate.success) {
+        console.log("\nOrchestration Halted: Quality gates failed.");
+        console.log(qualityGate.logs);
+        return;
+      }
       console.log("\nOrchestration Complete: Application successfully built.");
     } else {
       console.log("\nOrchestration Halted: Application failed to build within retries.");

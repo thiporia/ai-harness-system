@@ -1,14 +1,14 @@
 import { callLLM } from "../utils/openai.js";
-import { getHarnessPrinciples } from "../utils/harness-principles.js";
+import { getHarnessContext } from "../utils/harness-context.js";
 import fs from "fs";
 
 export async function developer(plan: any, design: any, feedback?: string) {
-  const principles = getHarnessPrinciples();
+  const context = getHarnessContext();
   const res = await callLLM(
     `You are a frontend developer. Return code only.
 
-Apply these harness engineering principles:
-${principles}`,
+Apply this harness context:
+${context}`,
     `
 Plan:
 ${JSON.stringify(plan)}
