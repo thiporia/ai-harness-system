@@ -2,8 +2,8 @@ import fs from "fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { tester } from "../src/agents/tester.js";
 
-const ARTIFACT_DIR = "./artifacts";
-const APP_FILE = `${ARTIFACT_DIR}/App.tsx`;
+const TMP_DIR = "./tests/.tmp";
+const APP_FILE = `${TMP_DIR}/App.tsx`;
 
 afterEach(() => {
   try {
@@ -16,20 +16,34 @@ afterEach(() => {
 });
 
 describe("tester", () => {
-  it("passes when useState exists", async () => {
-    fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
-    fs.writeFileSync(APP_FILE, "import { useState } from 'react';");
+  it("passes when minimum app checks are satisfied", async () => {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+    fs.writeFileSync(
+      APP_FILE,
+      `
+import { useState } from "react";
+export default function App() {
+  const [text, setText] = useState("");
+  return (
+    <div>
+      <input value={text} onChange={(e) => setText(e.target.value)} />
+      <button>Add</button>
+    </div>
+  );
+}
+`.trim()
+    );
 
-    const result = await tester();
+    const result = await tester(APP_FILE);
     expect(result).toEqual({ success: true });
   });
 
-  it("fails with logs when useState does not exist", async () => {
-    fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+  it("fails for trivial null app", async () => {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
     fs.writeFileSync(APP_FILE, "export default function App() { return null; }");
 
-    const result = await tester();
+    const result = await tester(APP_FILE);
     expect(result.success).toBe(false);
-    expect(result.logs).toBe("useState not found");
+    expect(result.logs).toContain("not trivial null app");
   });
 });
