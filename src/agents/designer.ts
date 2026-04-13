@@ -1,5 +1,6 @@
 import { callLLM } from "../utils/openai.js";
 import { getHarnessPrinciples } from "../utils/harness-principles.js";
+import { parseJsonResponse } from "../utils/json.js";
 
 export async function designer(plan: any) {
   const principles = getHarnessPrinciples();
@@ -21,5 +22,5 @@ Return:
 `
   );
 
-  return JSON.parse(res);
+  return parseJsonResponse(res);
 }

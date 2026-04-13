@@ -1,4 +1,8 @@
-node_modules/
+# 단일 파일
 .env
+
+# 폴더
+node_modules/
 artifacts/
 .vscode/
+dist/

@@ -33,11 +33,36 @@ Rules:
 - Do not break existing logic
 - Keep it runnable
 - Only improve orchestrator.ts
+- Return only raw TypeScript code for src/orchestrator.ts
+- Do not include markdown fences
+- Do not include explanations or file headers
 
 ${codebase}
 `
     }
   ];
+}
+
+function extractOrchestratorCode(raw) {
+  if (!raw) {
+    throw new Error("LLM returned empty content for orchestrator.");
+  }
+
+  const fencedMatch = raw.match(/```(?:typescript|ts)?\s*([\s\S]*?)```/i);
+  const content = fencedMatch ? fencedMatch[1].trim() : raw.trim();
+
+  const fileMatch = content.match(
+    /\/\/\s*FILE:\s*\.\/src\/orchestrator\.ts\s*([\s\S]*)/i
+  );
+  const candidate = fileMatch ? fileMatch[1].trim() : content;
+
+  if (!candidate.includes("runOrchestrator") && !candidate.includes("run()")) {
+    throw new Error(
+      "Refusing to overwrite orchestrator.ts because the response does not look like orchestrator code."
+    );
+  }
+
+  return candidate.endsWith("\n") ? candidate : `${candidate}\n`;
 }
 
 async function callOpenAI(codebase) {
@@ -124,7 +149,8 @@ async function run() {
   const content =
     provider === "gemini" ? await callGemini(codebase) : await callOpenAI(codebase);
 
-  fs.writeFileSync("./src/orchestrator.ts", content);
+  const orchestratorCode = extractOrchestratorCode(content);
+  fs.writeFileSync("./src/orchestrator.ts", orchestratorCode);
 
   console.log("AI improvement applied");
 }

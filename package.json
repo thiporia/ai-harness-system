@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/orchestrator.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
