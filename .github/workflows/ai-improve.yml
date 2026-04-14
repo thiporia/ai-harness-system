@@ -1,9 +1,9 @@
-name: AI Continuous Improvement
+﻿name: AI Continuous Improvement
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *" # 6시간마다
+    - cron: "0 */6 * * *"
 
 jobs:
   improve:
@@ -20,10 +20,16 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Run AI 실행
+      - name: Run AI improvement
         run: node scripts/ai-improve.js
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Validate Build
+        run: npm run build
+
+      - name: Validate Tests
+        run: npm run test
 
       - name: Commit
         run: |

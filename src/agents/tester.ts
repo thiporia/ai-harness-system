@@ -14,6 +14,8 @@ export async function tester(targetFile = "./artifacts/App.tsx") {
     ["has React state", code.includes("useState")],
     ["has input field", /<input[\s>]/i.test(code)],
     ["has add/create action", /(add|create)/i.test(code)],
+    ["has delete/remove action", /(delete|remove)/i.test(code)],
+    ["has complete/toggle action", /(toggle|complete|done)/i.test(code)],
     ["not trivial null app", !/export\s+default\s+function\s+App\(\)\s*\{\s*return\s+null;?\s*\}/i.test(code)]
   ];
 

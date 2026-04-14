@@ -24,10 +24,15 @@ describe("tester", () => {
 import { useState } from "react";
 export default function App() {
   const [text, setText] = useState("");
+  const [done, setDone] = useState(false);
+  const handleDelete = () => setText("");
+  const handleToggle = () => setDone((v) => !v);
   return (
     <div>
       <input value={text} onChange={(e) => setText(e.target.value)} />
       <button>Add</button>
+      <button onClick={handleDelete}>Delete</button>
+      <button onClick={handleToggle}>{done ? "Done" : "Toggle"}</button>
     </div>
   );
 }

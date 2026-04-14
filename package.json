@@ -6,6 +6,7 @@
   "scripts": {
     "version:bump": "node scripts/bump-version.js",
     "build": "tsc -p tsconfig.json",
+    "build:artifact": "node scripts/build-artifact.js",
     "build:versioned": "npm run version:bump && npm run build",
     "start": "node dist/orchestrator.js",
     "test": "vitest run --pool=threads --maxWorkers=1",
