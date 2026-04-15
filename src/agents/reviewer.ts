@@ -1,24 +1,29 @@
 import { callLLM } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
+import { extractBuildError } from "../utils/agent-comms.js";
 
 // ── 기존: 에러 로그 분석 (Developer 루프용) ──────────────────────
 
 export async function reviewer(logs: string) {
   const context = getHarnessContext();
+
+  // 에러 핵심 3줄만 추출 (전체 로그 전달 금지)
+  const errorSnippet = extractBuildError(logs);
+
   const res = await callLLM(
-    `You analyze errors and suggest fixes.
+    `You analyze build/test errors and suggest fixes. Output JSON only — no prose, no markdown.
 
 Apply this harness context:
 ${context}`,
     `
-Error:
-${logs}
+Build error (key lines):
+${errorSnippet}
 
-Return:
+Return ONLY this JSON, nothing else:
 {
-  "issue": "",
-  "fix": ""
+  "issue": "<root cause in ≤80 chars>",
+  "fix": "<concrete actionable fix in ≤80 chars>"
 }
 `
   );
@@ -26,155 +31,151 @@ Return:
   return parseJsonResponse(res);
 }
 
-// ── 신규: Planner 기획 검토 ──────────────────────────────────────
+// ── Planner 기획 검토 ──────────────────────────────────────────
 
 export async function reviewPlan(plan: any): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
+
+  // plan에서 검토에 필요한 핵심 정보만 추출 (전체 JSON 전달 금지)
+  const planSummary = {
+    features: (plan.features ?? []).map((f: any) => f?.name ?? String(f)),
+    scope: plan.scope ?? {},
+    device_targets: plan.device_targets ?? [],
+    stack_fixed: plan.stack_decision?.fixed ?? [],
+    stack_selected: plan.stack_decision?.selected ?? [],
+    folder_plan: plan.folder_plan ?? [],
+    acceptance_test_count: (plan.acceptance_tests ?? []).length,
+  };
+
   const res = await callLLM(
-    `You are a critical product reviewer. Review the following project plan strictly.
-Your job is to catch missing scope, unrealistic goals, incomplete acceptance tests,
-and misaligned stack decisions.
+    `You are a critical product reviewer. Review the project plan strictly.
+Catch missing scope, unrealistic goals, incomplete acceptance tests, misaligned stack.
 
 Apply this harness context:
 ${context}`,
     `
-Review this plan:
-${JSON.stringify(plan, null, 2)}
+Plan summary:
+${JSON.stringify(planSummary, null, 2)}
 
 Evaluation criteria:
-1. Are all features clearly scoped with in/out-of-scope defined?
-2. Are device targets realistic for the given stack?
-3. Does the stack decision align with harness baseline (React, TypeScript, Capacitor)?
-4. Is the folder plan realistic and complete?
-5. Are acceptance tests verifiable and specific?
+1. Are features clearly scoped (in/out-of-scope defined)?
+2. Are device targets realistic for React+Capacitor stack?
+3. Is the stack aligned with harness baseline?
+4. Is the folder plan complete for the features?
+5. Are there enough acceptance tests (≥1 per feature)?
 
-Return:
+Return ONLY this JSON:
 {
   "approved": true or false,
-  "issues": ["..."],
-  "feedback": "Concise summary of what must be fixed, or 'Plan approved.' if approved."
+  "feedback": "<if rejected: what to fix in ≤200 chars. If approved: 'Plan approved.'>"
 }
 `
   );
 
-  const result = parseJsonResponse<{ approved: boolean; issues: string[]; feedback: string }>(res);
-  return {
-    approved: result.approved,
-    feedback: result.feedback,
-  };
+  return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
 }
 
-// ── 신규: Developer 산출물 — Planner 관점 검토 ──────────────────────
+// ── Developer 산출물 — Planner 관점 검토 ────────────────────────
 
 export async function reviewCodeVsPlan(
   plan: any,
   codeSummary: string
 ): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
+
+  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
+
   const res = await callLLM(
-    `You are the original planner reviewing whether your plan was faithfully implemented.
+    `You are reviewing whether a plan was faithfully implemented.
 Check if all planned features exist in the generated code.
 
 Apply this harness context:
 ${context}`,
     `
-Original Plan:
-${JSON.stringify(plan, null, 2)}
+Planned features: ${featureNames.join(", ")}
 
-Code Summary (generated project):
+Code summary:
 ${codeSummary}
 
-Evaluation criteria:
-1. Are all features from plan.features present in the code? (check file names, component names, keywords)
-2. Is the folder structure consistent with plan.folder_plan?
-3. Are acceptance test scenarios likely coverable by the implemented code?
+Check: does each planned feature appear in the code (by file name, component name, or keyword)?
 
-Return:
+Return ONLY this JSON:
 {
   "approved": true or false,
-  "missing_features": ["feature names that seem unimplemented"],
-  "feedback": "Concise list of what is missing or misimplemented, or 'Implementation matches plan.' if approved."
+  "feedback": "<if rejected: missing features in ≤200 chars. If approved: 'Implementation matches plan.'>"
 }
 `
   );
 
-  const result = parseJsonResponse<{ approved: boolean; missing_features: string[]; feedback: string }>(res);
-  return { approved: result.approved, feedback: result.feedback };
+  return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
 }
 
-// ── 신규: Developer 산출물 — Designer 관점 검토 ──────────────────────
+// ── Developer 산출물 — Designer 관점 검토 ───────────────────────
 
 export async function reviewCodeVsDesign(
   design: any,
   codeSummary: string
 ): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
+
+  const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unnamed");
+
   const res = await callLLM(
-    `You are the original designer reviewing whether your component design was faithfully implemented.
-Check if all designed components exist and have correct structure.
+    `You are reviewing whether a component design was faithfully implemented.
+Check if all designed components exist in the generated code.
 
 Apply this harness context:
 ${context}`,
     `
-Original Design:
-${JSON.stringify(design, null, 2)}
+Designed components: ${componentNames.join(", ")}
 
-Code Summary (generated project):
+Code summary:
 ${codeSummary}
 
-Evaluation criteria:
-1. Does each designed component appear in the generated file list?
-2. Are component names consistent with the design?
-3. Do the key props defined in the design appear to be handled in the code?
+Check: does each component name appear in the file list or detected component list?
 
-Return:
+Return ONLY this JSON:
 {
   "approved": true or false,
-  "missing_components": ["component names missing from code"],
-  "feedback": "Concise list of what is missing or misimplemented, or 'Component structure matches design.' if approved."
+  "feedback": "<if rejected: missing components in ≤200 chars. If approved: 'Component structure matches design.'>"
 }
 `
   );
 
-  const result = parseJsonResponse<{ approved: boolean; missing_components: string[]; feedback: string }>(res);
-  return { approved: result.approved, feedback: result.feedback };
+  return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
 }
 
-// ── 신규: Designer 설계 검토 ──────────────────────────────────────
+// ── Designer 설계 검토 ────────────────────────────────────────
 
 export async function reviewDesign(plan: any, design: any): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
+
+  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
+  const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unnamed");
+
   const res = await callLLM(
     `You are a critical design reviewer. Review the component design against the plan.
-Your job is to catch missing components, misaligned props, and design gaps.
+Catch missing components, misaligned props, and design gaps.
 
 Apply this harness context:
 ${context}`,
     `
-Plan:
-${JSON.stringify(plan, null, 2)}
-
-Design:
-${JSON.stringify(design, null, 2)}
+Planned features: ${featureNames.join(", ")}
+Designed components (${componentNames.length}): ${componentNames.join(", ")}
+Folder plan: ${(plan.folder_plan ?? []).join(", ")}
 
 Evaluation criteria:
 1. Does each planned feature map to at least one component?
-2. Are component props sufficient to implement the feature?
-3. Is the design consistent with the planned folder structure?
-4. Are design references appropriately reflected (if any)?
+2. Are there enough components to implement all features?
+3. Is the component count realistic for the folder plan?
 
-Return:
+Return ONLY this JSON:
 {
   "approved": true or false,
-  "issues": ["..."],
-  "feedback": "Concise summary of what must be fixed, or 'Design approved.' if approved."
+  "feedback": "<if rejected: what is missing in ≤200 chars. If approved: 'Design approved.'>"
 }
 `
   );
 
-  const result = parseJsonResponse<{ approved: boolean; issues: string[]; feedback: string }>(res);
-  return {
-    approved: result.approved,
-    feedback: result.feedback,
-  };
+  return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
 }

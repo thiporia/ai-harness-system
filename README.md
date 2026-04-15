@@ -1,48 +1,44 @@
 # AI Harness System(Draft)
 
-> 컨셉 한 줄을 입력하면 Multi-Agent AI가 실제 동작하는 프로젝트를 자동으로 생성합니다. 
+> 컨셉 한 줄을 입력하면 Multi-Agent AI가 설계 → 코드 → 빌드 검증까지 자동으로 수행합니다.
+
+```bash
+npm run start "가족과 함께 쓰는 식단 관리 앱"
+```
+
+---
 
 ## 개요
 
-AI Harness System은 **Planner → Designer → Developer → Tester** 흐름을 가진 멀티 에이전트 오케스트레이션 시스템입니다. 사용자가 원하는 앱 컨셉만 입력하면, 내부에서 에이전트들이 협업하여 설계 → 코드 생성 → 빌드 검증 → E2E 테스트까지 자동으로 수행합니다.
+AI Harness System은 **Planner → Designer → Developer → Tester** 순으로 동작하는 멀티 에이전트 오케스트레이션 시스템입니다.
 
-```
-npm run start "나만의 메모 앱"
-```
-
-실행하면 `artifacts/<run-id>/` 에 완전한 React + TypeScript + Vite 프로젝트와 상세 빌드 리포트가 생성됩니다.
+각 Agent는 하나의 거대한 LLM 요청으로 모든 것을 처리하지 않습니다. **Task 단위로 쪼개어 수십 회의 짧은 LLM 호출**을 반복하고, Agent 간 모든 소통은 **ACP(Agent Communication Protocol) `.md` 파일**로 기록됩니다.
 
 ---
 
 ## 빠른 시작
 
-### 1. 의존성 설치
-
 ```bash
+# 1. 의존성 설치
 npm install
-```
 
-### 2. 환경 변수 설정
+# 2. 환경 변수 설정
+cp .env.example .env   # API 키 입력
 
-```bash
-cp .env.example .env
-# .env 파일에 API 키 입력
-```
-
-| 변수 | 필수 | 설명 |
-|------|------|------|
-| `OPENAI_API_KEY` | OpenAI 사용 시 | OpenAI API 키 |
-| `GEMINI_API_KEY` | Gemini 사용 시 | Google Gemini API 키 |
-| `LLM_PROVIDER` | 선택 | `openai` (기본) 또는 `gemini` |
-| `OPENAI_MODEL` | 선택 | 기본값: `gpt-4o-mini` |
-| `GEMINI_MODEL` | 선택 | 기본값: `gemini-2.5-flash` |
-
-### 3. 빌드 후 실행
-
-```bash
+# 3. 빌드 후 실행
 npm run build
 npm run start "ToDo 앱"
 ```
+
+### 환경 변수
+
+| 변수 | 설명 |
+|------|------|
+| `OPENAI_API_KEY` | OpenAI API 키 |
+| `GEMINI_API_KEY` | Google Gemini API 키 |
+| `LLM_PROVIDER` | `openai` (기본) 또는 `gemini` |
+| `OPENAI_MODEL` | 기본값: `gpt-4o-mini` |
+| `GEMINI_MODEL` | 기본값: `gemini-2.5-flash` |
 
 ---
 
@@ -52,27 +48,67 @@ npm run start "ToDo 앱"
 사용자 입력 (컨셉)
     │
     ▼
-┌─────────────────────────────────────────────┐
-│              Orchestrator                   │
-│                                             │
-│  [1] Planner  ──→  reviewPlan  (최대 5회)   │
-│       ↓                                     │
-│  [2] Designer ──→  reviewDesign (최대 5회)  │
-│       ↓  (awesome-design-md 참조)           │
-│  [3] Developer (멀티파일 프로젝트 생성)      │
-│       ↓                                     │
-│  [4] Tester   (build + E2E + cap sync)      │
-│       ↓ 실패                                │
-│  [5] Reviewer ──→ [3] 재시도 (최대 5회)     │
-│       ↓ 성공                                │
-│  [6] Quality Gate                           │
-└─────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│                      Orchestrator                      │
+│                                                        │
+│  [1] Planner ──────────────────────────────────────   │
+│       Decompose: feature 목록 (LLM 1회)               │
+│       Execute:   feature당 상세 계획 (LLM N회 병렬)    │
+│       Review:    reviewPlan → 재기획 (최대 5회)        │
+│            ↓                                           │
+│  [2] Designer ─────────────────────────────────────   │
+│       Decompose: component 목록 (LLM 1회)             │
+│       Execute:   component당 설계 (LLM N회 순차)       │
+│       Review:    reviewDesign → 재설계 (최대 5회)      │
+│            ↓ awesome-design-md 자동 참조               │
+│  [3] Developer ────────────────────────────────────   │
+│       Decompose: 파일 목록 + 목적 (LLM 1회)           │
+│       Execute:   파일당 코드 생성 (LLM N회 순차)       │
+│            ↓                                           │
+│  [4] Tester ───────────────────────────────────────   │
+│       npm run build → vite preview → HTTP 확인         │
+│       npx cap sync                                     │
+│       실패 → Reviewer → Developer 재시도 (최대 5회)    │
+│       성공 → Planner + Designer 병렬 의미 검토         │
+│            ↓                                           │
+│  [5] Quality Gate                                      │
+└────────────────────────────────────────────────────────┘
     │
     ▼
-artifacts/<run-id>/
-  ├── src/           (생성된 전체 프로젝트)
-  ├── package.json
-  └── BUILD_REPORT.md (전 과정 상세 기록)
+artifacts/<run-id>/          ← 생성된 프로젝트
+docs/agent-comms/<run-id>/   ← ACP 통신 기록 전체
+```
+
+---
+
+## 산출물 구조
+
+```
+artifacts/
+  <run-id>/                ← 실행마다 고유 폴더 (덮어쓰기 없음)
+    src/                   ← Plan의 folder_plan 구조 그대로
+    package.json
+    vite.config.ts
+    capacitor.config.ts
+    BUILD_REPORT.md        ← 전 과정 상세 기록 + ACP 참조
+  latest/
+    BUILD_REPORT.md
+    LATEST_RUN.txt
+
+docs/
+  agent-comms/<run-id>/    ← ACP 통신 기록 (감사 추적)
+    01-planner-output.md
+    02-plan-review-N.md
+    03-designer-output.md
+    04-design-review-N.md
+    05-developer-attempt-N.md
+    06-tester-result-N.md
+    07-build-review-N.md
+    08-semantic-review-N.md
+  artifacts/
+    latest-plan.md
+    latest-design.md
+    history/
 ```
 
 ---
@@ -89,54 +125,53 @@ artifacts/<run-id>/
 
 ---
 
-## 산출물 구조
+## 핵심 설계 원칙
 
-```
-artifacts/
-  <run-id>/              ← 실행마다 고유 폴더 (덮어쓰기 없음)
-    src/                 ← 생성된 프로젝트 소스
-    package.json
-    vite.config.ts
-    capacitor.config.ts
-    BUILD_REPORT.md      ← 전 과정 상세 기록
-  latest/
-    BUILD_REPORT.md      ← 최신 실행 리포트
-    LATEST_RUN.txt       ← 최신 run-id 참조
+### 1. Task 분해 (One Agent Call = One Task)
+Agent는 한 번의 LLM 호출로 모든 것을 처리하지 않습니다. Decompose → Execute 2단계로 나눠 Task당 1회 LLM을 호출합니다. 한 Task 실패가 전체 재시도로 이어지지 않습니다.
 
-docs/artifacts/
-  latest-plan.md         ← 최신 Planner 결과
-  latest-design.md       ← 최신 Designer 결과
-  history/               ← 전체 실행 이력
-```
+### 2. ACP 기반 소통
+Agent 간 데이터 전달은 `.md` 파일을 매개로 합니다. LLM에는 Summary(핵심 요약)만 전달하고, 전체 원본은 References 경로로만 기록합니다.
+
+### 3. 프롬프트 내 출력 크기 명시
+LLM 출력은 생성 후 절단하지 않습니다. 각 프롬프트에 필드별 글자 수를 직접 명시해 처음부터 최적 크기로 생성합니다. 절단은 프롬프트 버그를 감지하는 경고 안전망으로만 존재합니다.
+
+### 4. 검토 격리
+Reviewer가 개입하는 각 단계(Plan, Design, Build, Semantic)는 독립적입니다. 최대 재시도 횟수는 전체 루프에 대해 5회입니다.
 
 ---
 
-## 기술 스택 (생성 산출물 기준)
+## 생성 산출물 기술 스택
 
-- **UI**: React + TypeScript
-- **번들러**: Vite
-- **멀티플랫폼**: Capacitor (Web / iOS / Android)
-- **상태관리**: Jotai (필요 시)
-- **서버 데이터**: Supabase (필요 시)
-- **AI API 경유**: Cloudflare Worker (필요 시)
+| 항목 | 내용 |
+|------|------|
+| UI | React + TypeScript |
+| 번들러 | Vite |
+| 멀티플랫폼 | Capacitor (Web / iOS / Android) |
+| 상태관리 | Jotai (필요 시) |
+| 서버 데이터 | Supabase (필요 시) |
+| AI API 경유 | Cloudflare Worker (필요 시) |
 
 ---
 
-## 비용 (최대 재시도 기준, 1회 실행)
+## 예상 비용 (1회 실행, 최대 재시도 기준)
 
-| 모델 | 최대 비용 |
-|------|----------|
-| `gpt-4o-mini` (기본) | ~$0.04 (약 58원) |
-| `gemini-2.5-flash` | ~$0.02 (약 29원) |
-| `gpt-4o` | ~$0.71 (약 975원) |
+| 모델 | 비용 |
+|------|------|
+| `gpt-4o-mini` (기본) | ~$0.04 |
+| `gemini-2.5-flash` | ~$0.02 |
+| `gpt-4o` | ~$0.80 |
 
-> 총 30회 LLM 호출, ~141K 토큰 기준. 상세 산정은 `docs/USAGE_GUIDE.md` 참조.
+> Task 분해로 LLM 호출 횟수가 증가하지만 각 호출 토큰이 대폭 감소합니다. 상세 산정은 `docs/USAGE_GUIDE.md` 참조.
 
 ---
 
 ## 상세 문서
 
-- [사용 가이드 (전체)](docs/USAGE_GUIDE.md)
-- [Harness 원칙](docs/HARNESS_PRINCIPLES.md)
-- [Harness 실행 스펙](docs/HARNESS_SPEC.md)
-- [릴리스 노트](docs/RELEASE_NOTES.md)
+| 문서 | 내용 |
+|------|------|
+| [사용 가이드](docs/USAGE_GUIDE.md) | 설치부터 커스터마이징까지 전체 안내 |
+| [Harness 원칙](docs/HARNESS_PRINCIPLES.md) | 설계 철학 |
+| [Harness 실행 스펙](docs/HARNESS_SPEC.md) | Agent별 계약 및 Task 분해 규칙 |
+| [ACP 통신 프로토콜](docs/AGENT_COMMS_PROTOCOL.md) | 에이전트 간 소통 형식 명세 |
+| [릴리스 노트](docs/RELEASE_NOTES.md) | 버전별 변경사항 |

@@ -1,16 +1,48 @@
-import { planner, designer, developer, generateCodeSummary, tester, reviewer, reviewPlan, reviewDesign, reviewCodeVsPlan, reviewCodeVsDesign } from "./agents/index.js";
+import {
+  planner,
+  designer,
+  developer,
+  generateCodeSummary,
+  tester,
+  reviewer,
+  reviewPlan,
+  reviewDesign,
+  reviewCodeVsPlan,
+  reviewCodeVsDesign,
+} from "./agents/index.js";
+import {
+  writeAcpFile,
+  acpFilePath,
+  readAcpSummary,
+  buildPlanSummary,
+  buildDesignSummary,
+  buildDeveloperSummary,
+  buildTesterSummary,
+  buildReviewSummary,
+  extractBuildError,
+  enforceSummaryBudget,
+  truncateForArchive,
+} from "./utils/agent-comms.js";
 import fs from "fs";
 import path from "path";
 
+interface FeatureItem {
+  name: string;
+  description: string;
+  acceptance_tests: string[];
+}
+
 interface Plan {
-  features: unknown[];
-  acceptance_tests: unknown[];
-  folder_plan?: unknown[];
+  features: FeatureItem[];
+  acceptance_tests: Array<{ feature: string; tests: string[] }>;
+  folder_plan?: string[];
   stack_decision?: { fixed?: string[]; selected?: string[]; rationale?: string[] };
+  device_targets?: string[];
+  scope?: { in_scope: string[]; out_of_scope: string[] };
 }
 
 interface Design {
-  components: Array<{ name?: string; props?: unknown[]; description?: string; design_notes?: string }>;
+  components: Array<{ name?: string; props?: string[]; description?: string; design_notes?: string }>;
   design_references_used?: string[];
 }
 
@@ -37,6 +69,7 @@ interface QualityGateResult {
 interface ReviewEntry {
   attempt: number;
   feedback: string;
+  acpFile?: string;
 }
 
 interface BuildReport {
@@ -53,6 +86,7 @@ interface BuildReport {
   quality_gate: { success: boolean; logs: string } | null;
   final_status: "success" | "partial" | "failed";
   failure_reason?: string;
+  acp_dir?: string;
 }
 
 const MAX_RETRIES = 5;
@@ -80,12 +114,18 @@ function initBuildReport(runId: string, input: string): BuildReport {
     reviewer_history: [],
     quality_gate: null,
     final_status: "failed",
+    acp_dir: `docs/agent-comms/${runId}`,
   };
 }
 
 function renderBuildReport(report: BuildReport): string {
   const reviewLines = report.reviewer_history.length
-    ? report.reviewer_history.map((r) => `### 시도 ${r.attempt}\n\n${r.feedback}`).join("\n\n")
+    ? report.reviewer_history
+        .map((r) => {
+          const acpRef = r.acpFile ? `\n> ACP: \`${r.acpFile}\`` : "";
+          return `### 시도 ${r.attempt}\n\n${r.feedback}${acpRef}`;
+        })
+        .join("\n\n")
     : "_없음_";
 
   const fileList = report.developer_files.length
@@ -106,6 +146,7 @@ function renderBuildReport(report: BuildReport): string {
 - **run_id**: ${report.run_id}
 - **생성 시각**: ${report.created_at}
 - **입력 컨셉**: ${report.input}
+- **ACP 통신 기록**: \`${report.acp_dir ?? "docs/agent-comms/" + report.run_id}\`
 
 ---
 
@@ -166,6 +207,13 @@ function copyToLatest(runDir: string) {
   }
 
   fs.writeFileSync(path.join(latestDir, "LATEST_RUN.txt"), path.basename(runDir), "utf-8");
+}
+
+// ── 빌드 로그 파일 저장 ─────────────────────────────────────────
+
+function saveBuildLog(runDir: string, attempt: number, logs: string) {
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, `build-${attempt}.log`), logs, "utf-8");
 }
 
 // ── 기획 문서 저장 ─────────────────────────────────────────────
@@ -270,16 +318,43 @@ ${JSON.stringify(design, null, 2)}
 
 // ── 단계별 실행 ────────────────────────────────────────────────
 
-async function executePlanningStage(input: string, report: BuildReport): Promise<Plan> {
+async function executePlanningStage(
+  input: string,
+  runId: string,
+  report: BuildReport
+): Promise<Plan> {
   console.log("\n[1/5] Planning...");
   let plan = (await planner(input)) as Plan;
   console.log("PLAN:", JSON.stringify(plan, null, 2));
+
+  // ACP: 01-planner-output.md
+  const plannerAcpPath = writeAcpFile(runId, "01-planner-output.md", {
+    frontmatter: { from: "planner", to: "orchestrator", type: "output", run_id: runId, attempt: 1, status: "info" },
+    summary: buildPlanSummary(plan),
+    details: truncateForArchive(JSON.stringify(plan, null, 2)),
+    references: [`docs/artifacts/history/<run-id>-plan.md`],
+  });
+  console.log(`  → ACP: ${plannerAcpPath}`);
 
   // Planner cross-review
   for (let i = 0; i < MAX_RETRIES; i++) {
     console.log(`  → reviewPlan (${i + 1}/${MAX_RETRIES})`);
     const review: StageReviewResult = await reviewPlan(plan);
     report.planner_review_iterations = i + 1;
+
+    // ACP: 02-plan-review-N.md
+    const reviewAcpPath = writeAcpFile(runId, `02-plan-review-${i + 1}.md`, {
+      frontmatter: {
+        from: "reviewer",
+        to: "planner",
+        type: "review",
+        run_id: runId,
+        attempt: i + 1,
+        status: review.approved ? "approved" : "rejected",
+      },
+      summary: buildReviewSummary(review.approved, review.feedback),
+    });
+    console.log(`  → ACP: ${reviewAcpPath}`);
 
     if (review.approved) {
       console.log("  ✅ Plan approved.");
@@ -292,27 +367,58 @@ async function executePlanningStage(input: string, report: BuildReport): Promise
       break;
     }
 
-    plan = (await planner(`${input}\n\nPrevious plan was rejected. Feedback:\n${review.feedback}`)) as Plan;
-    console.log("  Revised PLAN:", JSON.stringify(plan, null, 2));
+    // 다음 Planner 호출 시 ACP Summary만 전달 (원본 JSON 아님)
+    const reviewSummary = readAcpSummary(reviewAcpPath);
+    plan = (await planner(input, reviewSummary)) as Plan;
+
+    // ACP 업데이트
+    writeAcpFile(runId, "01-planner-output.md", {
+      frontmatter: { from: "planner", to: "orchestrator", type: "output", run_id: runId, attempt: i + 2, status: "info" },
+      summary: buildPlanSummary(plan),
+      details: truncateForArchive(JSON.stringify(plan, null, 2)),
+    });
   }
 
-  report.planner_summary = Array.isArray(plan.features)
-    ? plan.features.map((f: any) => `- ${f?.name ?? JSON.stringify(f)}`).join("\n")
-    : JSON.stringify(plan.features);
-
+  report.planner_summary = buildPlanSummary(plan);
   return plan;
 }
 
-async function executeDesigningStage(plan: Plan, report: BuildReport): Promise<Design> {
+async function executeDesigningStage(
+  plan: Plan,
+  runId: string,
+  report: BuildReport
+): Promise<Design> {
   console.log("\n[2/5] Designing (with awesome-design-md refs)...");
   let design = (await designer(plan)) as Design;
   console.log("DESIGN:", JSON.stringify(design, null, 2));
+
+  // ACP: 03-designer-output.md
+  const designerAcpPath = writeAcpFile(runId, "03-designer-output.md", {
+    frontmatter: { from: "designer", to: "orchestrator", type: "output", run_id: runId, attempt: 1, status: "info" },
+    summary: buildDesignSummary(design),
+    details: truncateForArchive(JSON.stringify(design, null, 2)),
+  });
+  console.log(`  → ACP: ${designerAcpPath}`);
 
   // Design review
   for (let i = 0; i < MAX_RETRIES; i++) {
     console.log(`  → reviewDesign (${i + 1}/${MAX_RETRIES})`);
     const review: StageReviewResult = await reviewDesign(plan, design);
     report.designer_review_iterations = i + 1;
+
+    // ACP: 04-design-review-N.md
+    const reviewAcpPath = writeAcpFile(runId, `04-design-review-${i + 1}.md`, {
+      frontmatter: {
+        from: "reviewer",
+        to: "designer",
+        type: "review",
+        run_id: runId,
+        attempt: i + 1,
+        status: review.approved ? "approved" : "rejected",
+      },
+      summary: buildReviewSummary(review.approved, review.feedback),
+    });
+    console.log(`  → ACP: ${reviewAcpPath}`);
 
     if (review.approved) {
       console.log("  ✅ Design approved.");
@@ -325,27 +431,26 @@ async function executeDesigningStage(plan: Plan, report: BuildReport): Promise<D
       break;
     }
 
-    // Designer에게 feedback 전달해 재설계
-    const revisedPlan = {
-      ...plan,
-      _design_feedback: review.feedback,
-    };
+    // ACP Summary만 Designer에 전달
+    const reviewSummary = readAcpSummary(reviewAcpPath);
+    const revisedPlan = { ...plan, _design_feedback: reviewSummary };
     design = (await designer(revisedPlan)) as Design;
-    console.log("  Revised DESIGN:", JSON.stringify(design, null, 2));
+
+    writeAcpFile(runId, "03-designer-output.md", {
+      frontmatter: { from: "designer", to: "orchestrator", type: "output", run_id: runId, attempt: i + 2, status: "info" },
+      summary: buildDesignSummary(design),
+      details: truncateForArchive(JSON.stringify(design, null, 2)),
+    });
   }
 
-  report.designer_summary = Array.isArray(design.components)
-    ? design.components
-        .map((c) => `- ${c?.name ?? "unnamed"}${c?.description ? `: ${c.description}` : ""}`)
-        .join("\n")
-    : JSON.stringify(design.components);
-
+  report.designer_summary = buildDesignSummary(design);
   return design;
 }
 
 async function executeDevelopmentLoop(
   plan: Plan,
   design: Design,
+  runId: string,
   runDir: string,
   report: BuildReport
 ): Promise<boolean> {
@@ -355,20 +460,59 @@ async function executeDevelopmentLoop(
   let feedback = "";
 
   while (!success && retryCount < MAX_RETRIES) {
-    console.log(`\n  ── Attempt ${retryCount + 1}/${MAX_RETRIES} ──`);
+    const attempt = retryCount + 1;
+    console.log(`\n  ── Attempt ${attempt}/${MAX_RETRIES} ──`);
 
     // ── Phase 1: 코드 생성 ────────────────────────────────────
     const devResult = await developer(plan, design, feedback, runDir);
-    report.developer_attempts = retryCount + 1;
+    report.developer_attempts = attempt;
     report.developer_files = devResult.files;
+
+    // ACP: 05-developer-attempt-N.md
+    const devSummary = buildDeveloperSummary(
+      devResult.files,
+      devResult.npmResult.success,
+      devResult.gitResult?.success ?? false
+    );
+    const devAcpPath = writeAcpFile(runId, `05-developer-attempt-${attempt}.md`, {
+      frontmatter: {
+        from: "developer",
+        to: "orchestrator",
+        type: "output",
+        run_id: runId,
+        attempt,
+        status: devResult.npmResult.success ? "success" : "failure",
+      },
+      summary: devSummary,
+      references: [`artifacts/${runId}/`],
+    });
+    console.log(`  → ACP: ${devAcpPath}`);
 
     if (!devResult.npmResult.success) {
       console.warn("  [Phase 1] npm install failed → Reviewer");
-      const analysis = (await reviewer(
-        `npm install failed:\n${devResult.npmResult.output}`
-      )) as ReviewAnalysis;
-      feedback = `[npm install 실패]\nIssue: ${analysis.issue}\nFix: ${analysis.fix}`;
-      report.reviewer_history.push({ attempt: retryCount + 1, feedback });
+
+      // 빌드 로그 별도 저장 (LLM에는 에러 요약만)
+      saveBuildLog(runDir, attempt, devResult.npmResult.output ?? "");
+      const errorSnippet = extractBuildError(devResult.npmResult.output ?? "");
+      feedback = await safeReview(
+        `npm install failed:\n${errorSnippet}`,
+        "[npm install 실패] package.json의 존재하지 않는 패키지 이름을 확인하고 올바른 패키지명으로 수정하세요."
+      );
+
+      // ACP: 07-build-review-N.md
+      const fbAcpPath = writeAcpFile(runId, `07-build-review-${attempt}.md`, {
+        frontmatter: {
+          from: "reviewer",
+          to: "developer",
+          type: "feedback",
+          run_id: runId,
+          attempt,
+          status: "rejected",
+        },
+        summary: enforceSummaryBudget(feedback),
+        references: [`artifacts/${runId}/build-${attempt}.log`],
+      });
+      report.reviewer_history.push({ attempt, feedback, acpFile: fbAcpPath });
       retryCount++;
       continue;
     }
@@ -376,12 +520,51 @@ async function executeDevelopmentLoop(
     // ── Phase 2: 빌드 게이트 (Tester) ────────────────────────
     console.log("  [Phase 2] Build + E2E + cap sync...");
     const testResult: TestResult = await tester(runDir);
+    const testerLogs = testResult.logs ?? "";
+
+    // 빌드 로그 별도 저장
+    if (testerLogs) {
+      saveBuildLog(runDir, attempt, testerLogs);
+    }
+
+    // ACP: 06-tester-result-N.md
+    const testerAcpPath = writeAcpFile(runId, `06-tester-result-${attempt}.md`, {
+      frontmatter: {
+        from: "tester",
+        to: "orchestrator",
+        type: "output",
+        run_id: runId,
+        attempt,
+        status: testResult.success ? "success" : "failure",
+      },
+      summary: buildTesterSummary(testResult.success, testerLogs),
+      references: testerLogs ? [`artifacts/${runId}/build-${attempt}.log`] : undefined,
+    });
+    console.log(`  → ACP: ${testerAcpPath}`);
 
     if (!testResult.success) {
       console.log(`  [Phase 2] ❌ Build failed`);
-      const analysis = (await reviewer(testResult.logs || "Unknown failure")) as ReviewAnalysis;
-      feedback = `[빌드/테스트 실패]\nIssue: ${analysis.issue}\nFix: ${analysis.fix}`;
-      report.reviewer_history.push({ attempt: retryCount + 1, feedback });
+
+      // LLM에는 에러 요약만 전달
+      const testerSummary = readAcpSummary(testerAcpPath);
+      feedback = await safeReview(
+        testerSummary,
+        "[빌드 실패] TypeScript 컴파일 오류 또는 누락된 import를 확인하고 수정하세요."
+      );
+
+      const fbAcpPath = writeAcpFile(runId, `07-build-review-${attempt}.md`, {
+        frontmatter: {
+          from: "reviewer",
+          to: "developer",
+          type: "feedback",
+          run_id: runId,
+          attempt,
+          status: "rejected",
+        },
+        summary: enforceSummaryBudget(feedback),
+        references: [`artifacts/${runId}/build-${attempt}.log`],
+      });
+      report.reviewer_history.push({ attempt, feedback, acpFile: fbAcpPath });
       retryCount++;
       continue;
     }
@@ -398,6 +581,7 @@ async function executeDevelopmentLoop(
     ]);
 
     const semanticIssues: string[] = [];
+
     if (!planCodeReview.approved) {
       console.log(`  [Phase 3] ⚠️  Planner: ${planCodeReview.feedback}`);
       semanticIssues.push(`[Planner 검토] ${planCodeReview.feedback}`);
@@ -412,14 +596,34 @@ async function executeDevelopmentLoop(
       console.log("  [Phase 3] ✅ Designer: component structure matches design");
     }
 
+    // ACP: 08-semantic-review-N.md
+    const semanticStatus = semanticIssues.length === 0 ? "approved" : "rejected";
+    const semanticSummary = semanticIssues.length === 0
+      ? "✅ APPROVED\nPlanner + Designer 모두 승인"
+      : `❌ REJECTED\n${semanticIssues.join("\n")}`;
+
+    const semanticAcpPath = writeAcpFile(runId, `08-semantic-review-${attempt}.md`, {
+      frontmatter: {
+        from: "reviewer",
+        to: "developer",
+        type: "review",
+        run_id: runId,
+        attempt,
+        status: semanticStatus,
+      },
+      summary: enforceSummaryBudget(semanticSummary),
+    });
+    console.log(`  → ACP: ${semanticAcpPath}`);
+
     if (semanticIssues.length === 0) {
       console.log("  ✅ All phases passed.");
       success = true;
       break;
     }
 
-    feedback = `빌드는 성공했지만 의미 검토에서 문제가 발견됐습니다:\n${semanticIssues.join("\n")}`;
-    report.reviewer_history.push({ attempt: retryCount + 1, feedback });
+    // ACP Summary만 feedback으로 전달
+    feedback = readAcpSummary(semanticAcpPath);
+    report.reviewer_history.push({ attempt, feedback, acpFile: semanticAcpPath });
     retryCount++;
   }
 
@@ -428,6 +632,17 @@ async function executeDevelopmentLoop(
   }
 
   return success;
+}
+
+// reviewer JSON 파싱 실패 시 fallback 피드백으로 루프를 계속 유지
+async function safeReview(logs: string, fallback: string): Promise<string> {
+  try {
+    const analysis = (await reviewer(logs)) as ReviewAnalysis;
+    return `Issue: ${analysis.issue}\nFix: ${analysis.fix}`;
+  } catch (err) {
+    console.warn("  [reviewer] JSON parse failed, using fallback feedback:", (err as Error).message);
+    return fallback;
+  }
 }
 
 function runQualityGates(testLogs: string): QualityGateResult {
@@ -455,14 +670,15 @@ async function runOrchestrator(input: string): Promise<void> {
   console.log(`[run: ${runId}]`);
   console.log(`Input: "${input}"`);
   console.log(`Output: ${runDir}`);
+  console.log(`ACP: docs/agent-comms/${runId}/`);
   console.log("=".repeat(60));
 
   try {
     // [1] Planning + cross-review
-    const plan = await executePlanningStage(input, report);
+    const plan = await executePlanningStage(input, runId, report);
 
     // [2] Designing (awesome-design-md) + review
-    const design = await executeDesigningStage(plan, report);
+    const design = await executeDesigningStage(plan, runId, report);
 
     persistPlanningDocs(input, plan, design);
     console.log(`\nPlanning documents saved under ${DOC_ARTIFACTS_DIR}`);
@@ -471,7 +687,7 @@ async function runOrchestrator(input: string): Promise<void> {
     saveBuildReport(runDir, report);
 
     // [3-4] Development + Testing loop
-    const developmentSuccessful = await executeDevelopmentLoop(plan, design, runDir, report);
+    const developmentSuccessful = await executeDevelopmentLoop(plan, design, runId, runDir, report);
 
     if (developmentSuccessful) {
       // [5] Quality Gate
@@ -503,6 +719,7 @@ async function runOrchestrator(input: string): Promise<void> {
     copyToLatest(runDir);
     console.log(`\nBuild report → ${path.join(runDir, "BUILD_REPORT.md")}`);
     console.log(`Latest       → ${path.join(ARTIFACTS_DIR, "latest")}`);
+    console.log(`ACP records  → docs/agent-comms/${runId}/`);
   }
 }
 

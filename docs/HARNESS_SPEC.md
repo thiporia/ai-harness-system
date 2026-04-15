@@ -64,6 +64,42 @@ Planner는 반드시 아래 항목을 포함해 계획을 수립한다.
   - 문서는 한국어 기준으로 사람이 읽기 쉽게 요약을 먼저 제공한다.
   - 원본 JSON은 문서 하단에 그대로 병기하여 추적 가능성을 유지한다.
 
+## Task Decomposition Contract
+
+> **원칙**: Agent는 자신의 전체 역할을 단 하나의 LLM 호출로 처리해서는 안 된다.  
+> 모든 Agent는 **Decompose → Execute** 2단계로 동작한다.
+
+### 공통 규칙
+
+1. **Decompose 호출**: Agent가 시작될 때 LLM을 1회 호출해 할 일 목록(Task List)을 획득한다.
+   - 입력 토큰 목표: ≤2,000
+   - 출력 형식: JSON 배열 (`[{id, name, ...}]`)
+
+2. **Execute 호출**: Task마다 LLM을 1회 호출해 처리한다.
+   - 입력 토큰 목표: ≤4,000 (해당 Task 컨텍스트만 포함)
+   - 출력 토큰 목표: ≤1,500
+
+3. **Task 컨텍스트 공유**: Execute 호출 시 이전 Task의 전체 결과물을 전달하지 않는다.
+   - **허용**: exports 선언, 파일 이름 목록, 함수 시그니처
+   - **금지**: 이전 Task의 전체 코드, 이전 LLM 응답 원본
+
+4. **Task 실패 격리**: 한 Task가 실패해도 다른 Task는 영향받지 않는다. 실패한 Task만 재시도한다.
+
+5. **ACP Task 파일**: Task마다 ACP `.md` 파일을 생성한다.
+   - 파일명: `<stage>-task-<N>.md` (예: `05-developer-task-003.md`)
+
+### Agent별 Task 단위
+
+| Agent | Decompose 결과 | Execute 단위 |
+|-------|--------------|-------------|
+| Planner | feature 이름 목록 | feature 1개 상세 계획 |
+| Designer | component 이름 목록 | component 1개 설계 |
+| Developer | 파일 경로 + 목적 목록 | 파일 1개 코드 생성 |
+| Reviewer | (해당 없음 — 항상 단일 대상) | — |
+| Tester | (단계별 실행) | — |
+
+---
+
 ## Developer Decision Contract
 
 Developer는 단일 파일 생성을 금지한다. 반드시 아래 기준을 따른다.

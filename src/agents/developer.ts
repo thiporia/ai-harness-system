@@ -1,33 +1,34 @@
+/**
+ * Developer Agent — Task Decomposition 방식
+ *
+ * Decompose: 생성할 파일 목록 획득 (LLM 1회) → FileSpec[]
+ * Execute:   파일당 코드 생성 (LLM N회, 즉시 디스크 기록)
+ * Post:      npm install + git commit
+ */
 import { callLLM } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
+import { parseJsonResponse } from "../utils/json.js";
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 
-// === FILE: <path> === ... === END FILE === 형식 파싱
-function parseFileManifest(raw: string): Array<{ filePath: string; content: string }> {
-  const results: Array<{ filePath: string; content: string }> = [];
-  const pattern = /===\s*FILE:\s*(.+?)\s*===\n([\s\S]*?)===\s*END FILE\s*===/g;
-  let match: RegExpExecArray | null;
+// ── 타입 ────────────────────────────────────────────────────────
 
-  while ((match = pattern.exec(raw)) !== null) {
-    const filePath = (match[1] ?? "").trim();
-    const content = match[2] ?? "";
-    // 앞뒤 개행 하나씩만 제거
-    const trimmedContent = content.replace(/^\n/, "").replace(/\n$/, "");
-    results.push({ filePath, content: trimmedContent });
-  }
-
-  return results;
+interface FileSpec {
+  path: string;           // 상대 경로 (예: src/components/TodoList.tsx)
+  purpose: string;        // 한 줄 설명
+  exports: string[];      // export할 식별자 목록
+  imports_from?: string[]; // 의존하는 파일 경로 (컨텍스트 공유용)
 }
 
-function writeFiles(files: Array<{ filePath: string; content: string }>, outputDir: string) {
-  for (const { filePath, content } of files) {
-    const absPath = path.join(outputDir, filePath);
-    fs.mkdirSync(path.dirname(absPath), { recursive: true });
-    fs.writeFileSync(absPath, content, "utf-8");
-  }
+interface GeneratedFile {
+  spec: FileSpec;
+  content: string;
+  success: boolean;
+  error?: string;
 }
+
+// ── Shell 유틸 ────────────────────────────────────────────────
 
 function runShell(cmd: string, cwd: string): { success: boolean; output: string } {
   try {
@@ -38,23 +39,169 @@ function runShell(cmd: string, cwd: string): { success: boolean; output: string 
   }
 }
 
-// 검토용 코드 요약 생성 (토큰 절약: 코드 전체 대신 구조 요약만 전달)
+// ── Step 1: Decompose ─────────────────────────────────────────
+// Plan + Design → 생성할 파일 목록 (코드 없음)
+
+async function decomposeFiles(plan: any, design: any, feedback?: string): Promise<FileSpec[]> {
+  const context = getHarnessContext();
+
+  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
+  const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unknown");
+  const folderPlan = (plan.folder_plan ?? []).join(", ");
+  const stackSelected = (plan.stack_decision?.selected ?? []).join(", ");
+  const feedbackSection = feedback ? `\nPrevious reviewer feedback:\n${feedback}` : "";
+
+  const res = await callLLM(
+    `You are a senior frontend developer planning a project. Output JSON only.
+
+Apply this harness context:
+${context}`,
+    `
+Create a complete file manifest for this React+TypeScript+Vite+Capacitor project.
+
+Features: ${featureNames.join(", ")}
+Components to implement: ${componentNames.join(", ")}
+Folder structure: ${folderPlan}
+Extra stack: ${stackSelected || "none"}${feedbackSection}
+
+Return a JSON array of ALL files to generate:
+[
+  {
+    "path": "package.json",
+    "purpose": "npm project config with vite build scripts",
+    "exports": [],
+    "imports_from": []
+  },
+  {
+    "path": "src/components/TodoList.tsx",
+    "purpose": "renders the list of todo items",
+    "exports": ["TodoList"],
+    "imports_from": ["src/types/index.ts", "src/hooks/useTodos.ts"]
+  }
+]
+
+Required files to include:
+- package.json (with dev/build/preview scripts)
+- vite.config.ts
+- tsconfig.json
+- index.html
+- src/main.tsx
+- src/App.tsx
+- capacitor.config.ts
+- One file per component from the component list
+- One hook file per major state concern
+- src/types/index.ts (shared types)
+
+Rules:
+- path: relative from project root, no leading slash
+- purpose: ≤15 words
+- exports: array of exported names (empty for config files)
+- imports_from: only files defined in THIS manifest
+- Do NOT include node_modules, lock files, or dist
+- Total: 10-30 files
+`
+  );
+
+  const parsed = parseJsonResponse<FileSpec[]>(res);
+  if (!Array.isArray(parsed)) throw new Error("decomposeFiles: LLM did not return an array");
+  return parsed;
+}
+
+// ── Step 2: Execute ───────────────────────────────────────────
+// 파일 하나씩 코드 생성
+// 다른 파일의 전체 코드는 전달하지 않음 — exports 선언만 공유
+
+async function generateFile(
+  spec: FileSpec,
+  allSpecs: FileSpec[],
+  plan: any,
+  design: any,
+  alreadyGenerated: Map<string, string>  // path → exports 시그니처
+): Promise<string> {
+  const context = getHarnessContext();
+
+  // 의존 파일의 exports 시그니처만 공유 (전체 코드 금지)
+  const depContext = (spec.imports_from ?? [])
+    .filter((dep) => alreadyGenerated.has(dep))
+    .map((dep) => `- ${dep} → exports: ${alreadyGenerated.get(dep)}`)
+    .join("\n");
+
+  // 이 파일과 관련된 feature/component 정보만 추출
+  const relatedFeature = (plan.features ?? []).find((f: any) => {
+    const name = (f?.name ?? "").toLowerCase();
+    return spec.path.toLowerCase().includes(name.split(/\W+/)[0] ?? "____");
+  });
+
+  const relatedComponent = (design.components ?? []).find((c: any) =>
+    spec.exports.includes(c?.name ?? "____")
+  );
+
+  const featureHint = relatedFeature
+    ? `Feature: ${relatedFeature.name} — ${relatedFeature.description ?? ""}`
+    : "";
+
+  const componentHint = relatedComponent
+    ? `Component props: ${(relatedComponent.props ?? []).join(", ")}\nDesign notes: ${relatedComponent.design_notes ?? ""}`
+    : "";
+
+  const isConfigFile = spec.exports.length === 0;
+
+  // 설정 파일과 코드 파일은 프롬프트를 다르게 구성
+  const taskDescription = isConfigFile
+    ? `Generate the config file: ${spec.path}
+Purpose: ${spec.purpose}
+Stack: React, TypeScript, Vite, Capacitor, ${(plan.stack_decision?.selected ?? []).join(", ") || "no extras"}`
+    : `Generate the TypeScript/React file: ${spec.path}
+Purpose: ${spec.purpose}
+Exports: ${spec.exports.join(", ")}
+${featureHint}
+${componentHint}
+${depContext ? `\nAvailable imports:\n${depContext}` : ""}`;
+
+  const res = await callLLM(
+    `You are a senior frontend developer writing ONE file. Output ONLY the file content — no delimiters, no explanation, no markdown fences.
+
+Apply this harness context:
+${context}`,
+    `${taskDescription}
+
+Requirements:
+- Use React 18 + TypeScript strict mode
+- Mobile-first styling (use CSS modules or inline styles; no external CSS libraries unless plan specifies)
+- No placeholder comments like "// TODO" — implement fully
+- Imports must use .js extension for local files (ESM NodeNext)
+
+Output ONLY the raw file content.`
+  );
+
+  return res.trim();
+}
+
+// ── 파일 저장 ─────────────────────────────────────────────────
+
+function writeFile(filePath: string, content: string, outputDir: string) {
+  const absPath = path.join(outputDir, filePath);
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  fs.writeFileSync(absPath, content, "utf-8");
+}
+
+// ── 코드 요약 (Reviewer용) ────────────────────────────────────
+
 export function generateCodeSummary(filePaths: string[], plan: any, outputDir: string): string {
   const lines: string[] = [];
 
-  // 1. 파일 목록 (폴더별 그룹)
   const grouped: Record<string, string[]> = {};
   for (const f of filePaths) {
     const dir = path.dirname(f) || ".";
     (grouped[dir] ??= []).push(path.basename(f));
   }
+
   lines.push("[생성된 파일 목록]");
   for (const [dir, files] of Object.entries(grouped)) {
     lines.push(`  ${dir}/`);
     files.forEach((f) => lines.push(`    - ${f}`));
   }
 
-  // 2. 컴포넌트 이름 추출 (export default function / export const 패턴)
   const componentNames: string[] = [];
   const compPattern = /export\s+(?:default\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9]+)/g;
   for (const f of filePaths) {
@@ -67,17 +214,17 @@ export function generateCodeSummary(filePaths: string[], plan: any, outputDir: s
         if (name && !componentNames.includes(name)) componentNames.push(name);
       }
       compPattern.lastIndex = 0;
-    } catch { /* 파일 읽기 실패 무시 */ }
+    } catch { /* ignore */ }
   }
+
   if (componentNames.length > 0) {
     lines.push("\n[감지된 컴포넌트 / 함수]");
     lines.push("  " + componentNames.join(", "));
   }
 
-  // 3. plan features 키워드 매칭
   const features = Array.isArray(plan.features) ? plan.features : [];
   if (features.length > 0) {
-    lines.push("\n[plan features 구현 여부 (키워드 매칭)]");
+    lines.push("\n[plan features 구현 여부]");
     const allCode = filePaths
       .filter((f) => f.endsWith(".tsx") || f.endsWith(".ts"))
       .map((f) => {
@@ -99,93 +246,63 @@ export function generateCodeSummary(filePaths: string[], plan: any, outputDir: s
   return lines.join("\n");
 }
 
+// ── Public API ────────────────────────────────────────────────
+
 export async function developer(
   plan: any,
   design: any,
   feedback?: string,
   outputDir: string = "./artifacts"
-): Promise<{ files: string[]; npmResult: { success: boolean; output: string }; gitResult: { success: boolean; output: string } }> {
+): Promise<{
+  files: string[];
+  npmResult: { success: boolean; output: string };
+  gitResult: { success: boolean; output: string };
+  fileResults: GeneratedFile[];
+}> {
   const context = getHarnessContext();
 
-  const folderPlan = Array.isArray(plan.folder_plan)
-    ? plan.folder_plan.join(", ")
-    : JSON.stringify(plan.folder_plan ?? []);
-
-  const stackSelected = Array.isArray(plan.stack_decision?.selected)
-    ? plan.stack_decision.selected.join(", ")
-    : "";
-
-  const features = Array.isArray(plan.features)
-    ? plan.features.map((f: any) => `- ${f?.name ?? JSON.stringify(f)}: ${f?.description ?? ""}`).join("\n")
-    : JSON.stringify(plan.features ?? []);
-
-  const components = Array.isArray(design.components)
-    ? design.components.map((c: any) => `- ${c?.name ?? "unknown"}: props=[${(c?.props ?? []).join(", ")}]`).join("\n")
-    : JSON.stringify(design.components ?? []);
-
-  const res = await callLLM(
-    `You are a senior frontend developer. Output ONLY a file manifest — no explanations, no markdown prose.
-
-Apply this harness context:
-${context}`,
-    `
-Generate a complete project for the following plan.
-
-## Input concept
-${plan.input ?? "React App"}
-
-## Features
-${features}
-
-## Folder plan
-${folderPlan}
-
-## Additional stack
-${stackSelected || "none"}
-
-## Component design
-${components}
-
-## Previous reviewer feedback
-${feedback || "none"}
-
----
-
-Output every file using EXACTLY this delimiter format (no other text):
-
-=== FILE: <relative-path-from-project-root> ===
-<file content>
-=== END FILE ===
-
-Requirements:
-- React + TypeScript + Vite scaffold (vite.config.ts, tsconfig.json, index.html, src/main.tsx)
-- package.json with scripts: { "dev": "vite", "build": "vite build", "preview": "vite preview" }
-- capacitor.config.ts included
-- Follow the folder plan strictly (${folderPlan})
-- Implement ALL features from the plan
-- Use useState / useReducer as needed (no external state lib unless plan specifies)
-- Each component in its own file under the correct folder
-- No single-file App-only output — the full project structure is required
-- Do NOT include node_modules or lock files
-`
-  );
-
-  const files = parseFileManifest(res);
-
-  if (files.length === 0) {
-    throw new Error("Developer LLM returned no parseable files. Raw output:\n" + res.slice(0, 500));
-  }
+  // ── Phase 1: Decompose ──────────────────────────────────────
+  console.log("  [developer] Decomposing file manifest...");
+  const fileSpecs = await decomposeFiles(plan, design, feedback);
+  console.log(`  [developer] ${fileSpecs.length} files to generate.`);
 
   fs.mkdirSync(outputDir, { recursive: true });
-  writeFiles(files, outputDir);
 
-  // npm install
+  // ── Phase 2: Execute — 파일당 LLM 1회 ────────────────────────
+  const fileResults: GeneratedFile[] = [];
+  const alreadyGenerated = new Map<string, string>(); // path → exports signature
+
+  for (let i = 0; i < fileSpecs.length; i++) {
+    const spec = fileSpecs[i]!;
+    console.log(`  [developer] [${i + 1}/${fileSpecs.length}] ${spec.path}`);
+
+    try {
+      const content = await generateFile(spec, fileSpecs, plan, design, alreadyGenerated);
+      writeFile(spec.path, content, outputDir);
+
+      // exports 시그니처 기록 (다음 파일이 참조할 용도)
+      const exportsSig = spec.exports.length > 0
+        ? spec.exports.join(", ")
+        : "(config/no exports)";
+      alreadyGenerated.set(spec.path, exportsSig);
+
+      fileResults.push({ spec, content, success: true });
+    } catch (err: any) {
+      console.warn(`  [developer] ⚠️  Failed: ${spec.path} — ${err?.message}`);
+      fileResults.push({ spec, content: "", success: false, error: err?.message });
+    }
+  }
+
+  const successCount = fileResults.filter((r) => r.success).length;
+  console.log(`  [developer] Generated ${successCount}/${fileSpecs.length} files.`);
+
+  // ── Phase 3: npm install ──────────────────────────────────────
   const npmResult = runShell("npm install --prefer-offline", outputDir);
   if (!npmResult.success) {
     console.warn("[developer] npm install failed:", npmResult.output);
   }
 
-  // git init + initial commit
+  // ── Phase 4: git init + commit ────────────────────────────────
   runShell("git init", outputDir);
   runShell("git add -A", outputDir);
   const gitResult = runShell(
@@ -193,13 +310,13 @@ Requirements:
     outputDir
   );
 
-  console.log(`[developer] wrote ${files.length} files to ${outputDir}`);
   console.log(`[developer] npm install: ${npmResult.success ? "ok" : "failed"}`);
   console.log(`[developer] git commit: ${gitResult.success ? "ok" : "failed"}`);
 
   return {
-    files: files.map((f) => f.filePath),
+    files: fileResults.filter((r) => r.success).map((r) => r.spec.path),
     npmResult,
     gitResult,
+    fileResults,
   };
 }
