@@ -38,6 +38,67 @@ function runShell(cmd: string, cwd: string): { success: boolean; output: string 
   }
 }
 
+// 검토용 코드 요약 생성 (토큰 절약: 코드 전체 대신 구조 요약만 전달)
+export function generateCodeSummary(filePaths: string[], plan: any, outputDir: string): string {
+  const lines: string[] = [];
+
+  // 1. 파일 목록 (폴더별 그룹)
+  const grouped: Record<string, string[]> = {};
+  for (const f of filePaths) {
+    const dir = path.dirname(f) || ".";
+    (grouped[dir] ??= []).push(path.basename(f));
+  }
+  lines.push("[생성된 파일 목록]");
+  for (const [dir, files] of Object.entries(grouped)) {
+    lines.push(`  ${dir}/`);
+    files.forEach((f) => lines.push(`    - ${f}`));
+  }
+
+  // 2. 컴포넌트 이름 추출 (export default function / export const 패턴)
+  const componentNames: string[] = [];
+  const compPattern = /export\s+(?:default\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9]+)/g;
+  for (const f of filePaths) {
+    if (!f.endsWith(".tsx") && !f.endsWith(".ts")) continue;
+    try {
+      const code = fs.readFileSync(path.join(outputDir, f), "utf-8");
+      let m: RegExpExecArray | null;
+      while ((m = compPattern.exec(code)) !== null) {
+        const name = m[1];
+        if (name && !componentNames.includes(name)) componentNames.push(name);
+      }
+      compPattern.lastIndex = 0;
+    } catch { /* 파일 읽기 실패 무시 */ }
+  }
+  if (componentNames.length > 0) {
+    lines.push("\n[감지된 컴포넌트 / 함수]");
+    lines.push("  " + componentNames.join(", "));
+  }
+
+  // 3. plan features 키워드 매칭
+  const features = Array.isArray(plan.features) ? plan.features : [];
+  if (features.length > 0) {
+    lines.push("\n[plan features 구현 여부 (키워드 매칭)]");
+    const allCode = filePaths
+      .filter((f) => f.endsWith(".tsx") || f.endsWith(".ts"))
+      .map((f) => {
+        try { return fs.readFileSync(path.join(outputDir, f), "utf-8"); } catch { return ""; }
+      })
+      .join("\n")
+      .toLowerCase();
+
+    for (const feature of features) {
+      const name: string = typeof feature === "string"
+        ? feature
+        : (feature as any)?.name ?? JSON.stringify(feature);
+      const keywords = name.toLowerCase().split(/\W+/).filter((k: string) => k.length > 2);
+      const found = keywords.some((kw: string) => allCode.includes(kw));
+      lines.push(`  - ${name}: ${found ? "✅ 감지됨" : "❌ 미감지"}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export async function developer(
   plan: any,
   design: any,

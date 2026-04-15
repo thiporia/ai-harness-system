@@ -64,6 +64,82 @@ Return:
   };
 }
 
+// ── 신규: Developer 산출물 — Planner 관점 검토 ──────────────────────
+
+export async function reviewCodeVsPlan(
+  plan: any,
+  codeSummary: string
+): Promise<{ approved: boolean; feedback: string }> {
+  const context = getHarnessContext();
+  const res = await callLLM(
+    `You are the original planner reviewing whether your plan was faithfully implemented.
+Check if all planned features exist in the generated code.
+
+Apply this harness context:
+${context}`,
+    `
+Original Plan:
+${JSON.stringify(plan, null, 2)}
+
+Code Summary (generated project):
+${codeSummary}
+
+Evaluation criteria:
+1. Are all features from plan.features present in the code? (check file names, component names, keywords)
+2. Is the folder structure consistent with plan.folder_plan?
+3. Are acceptance test scenarios likely coverable by the implemented code?
+
+Return:
+{
+  "approved": true or false,
+  "missing_features": ["feature names that seem unimplemented"],
+  "feedback": "Concise list of what is missing or misimplemented, or 'Implementation matches plan.' if approved."
+}
+`
+  );
+
+  const result = parseJsonResponse<{ approved: boolean; missing_features: string[]; feedback: string }>(res);
+  return { approved: result.approved, feedback: result.feedback };
+}
+
+// ── 신규: Developer 산출물 — Designer 관점 검토 ──────────────────────
+
+export async function reviewCodeVsDesign(
+  design: any,
+  codeSummary: string
+): Promise<{ approved: boolean; feedback: string }> {
+  const context = getHarnessContext();
+  const res = await callLLM(
+    `You are the original designer reviewing whether your component design was faithfully implemented.
+Check if all designed components exist and have correct structure.
+
+Apply this harness context:
+${context}`,
+    `
+Original Design:
+${JSON.stringify(design, null, 2)}
+
+Code Summary (generated project):
+${codeSummary}
+
+Evaluation criteria:
+1. Does each designed component appear in the generated file list?
+2. Are component names consistent with the design?
+3. Do the key props defined in the design appear to be handled in the code?
+
+Return:
+{
+  "approved": true or false,
+  "missing_components": ["component names missing from code"],
+  "feedback": "Concise list of what is missing or misimplemented, or 'Component structure matches design.' if approved."
+}
+`
+  );
+
+  const result = parseJsonResponse<{ approved: boolean; missing_components: string[]; feedback: string }>(res);
+  return { approved: result.approved, feedback: result.feedback };
+}
+
 // ── 신규: Designer 설계 검토 ──────────────────────────────────────
 
 export async function reviewDesign(plan: any, design: any): Promise<{ approved: boolean; feedback: string }> {

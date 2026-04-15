@@ -1,4 +1,4 @@
-import { planner, designer, developer, tester, reviewer, reviewPlan, reviewDesign } from "./agents/index.js";
+import { planner, designer, developer, generateCodeSummary, tester, reviewer, reviewPlan, reviewDesign, reviewCodeVsPlan, reviewCodeVsDesign } from "./agents/index.js";
 import fs from "fs";
 import path from "path";
 
@@ -355,45 +355,76 @@ async function executeDevelopmentLoop(
   let feedback = "";
 
   while (!success && retryCount < MAX_RETRIES) {
-    console.log(`  Development Attempt ${retryCount + 1}/${MAX_RETRIES}`);
+    console.log(`\n  ── Attempt ${retryCount + 1}/${MAX_RETRIES} ──`);
 
+    // ── Phase 1: 코드 생성 ────────────────────────────────────
     const devResult = await developer(plan, design, feedback, runDir);
     report.developer_attempts = retryCount + 1;
     report.developer_files = devResult.files;
 
     if (!devResult.npmResult.success) {
-      console.warn("  npm install failed — passing to reviewer");
+      console.warn("  [Phase 1] npm install failed → Reviewer");
       const analysis = (await reviewer(
         `npm install failed:\n${devResult.npmResult.output}`
       )) as ReviewAnalysis;
-      feedback = `\nIssue: ${analysis.issue}\nFix: ${analysis.fix}\n`;
+      feedback = `[npm install 실패]\nIssue: ${analysis.issue}\nFix: ${analysis.fix}`;
       report.reviewer_history.push({ attempt: retryCount + 1, feedback });
       retryCount++;
       continue;
     }
 
-    console.log("  Testing (build + vite preview + cap sync)...");
+    // ── Phase 2: 빌드 게이트 (Tester) ────────────────────────
+    console.log("  [Phase 2] Build + E2E + cap sync...");
     const testResult: TestResult = await tester(runDir);
 
-    if (testResult.success) {
-      console.log("  ✅ All tests passed.");
+    if (!testResult.success) {
+      console.log(`  [Phase 2] ❌ Build failed`);
+      const analysis = (await reviewer(testResult.logs || "Unknown failure")) as ReviewAnalysis;
+      feedback = `[빌드/테스트 실패]\nIssue: ${analysis.issue}\nFix: ${analysis.fix}`;
+      report.reviewer_history.push({ attempt: retryCount + 1, feedback });
+      retryCount++;
+      continue;
+    }
+
+    console.log("  [Phase 2] ✅ Build passed");
+
+    // ── Phase 3: 의미 검토 — Planner + Designer 병렬 실행 ─────
+    console.log("  [Phase 3] Semantic review (Planner + Designer, parallel)...");
+    const codeSummary = generateCodeSummary(devResult.files, plan, runDir);
+
+    const [planCodeReview, designCodeReview] = await Promise.all([
+      reviewCodeVsPlan(plan, codeSummary),
+      reviewCodeVsDesign(design, codeSummary),
+    ]);
+
+    const semanticIssues: string[] = [];
+    if (!planCodeReview.approved) {
+      console.log(`  [Phase 3] ⚠️  Planner: ${planCodeReview.feedback}`);
+      semanticIssues.push(`[Planner 검토] ${planCodeReview.feedback}`);
+    } else {
+      console.log("  [Phase 3] ✅ Planner: implementation matches plan");
+    }
+
+    if (!designCodeReview.approved) {
+      console.log(`  [Phase 3] ⚠️  Designer: ${designCodeReview.feedback}`);
+      semanticIssues.push(`[Designer 검토] ${designCodeReview.feedback}`);
+    } else {
+      console.log("  [Phase 3] ✅ Designer: component structure matches design");
+    }
+
+    if (semanticIssues.length === 0) {
+      console.log("  ✅ All phases passed.");
       success = true;
       break;
     }
 
-    console.log(`  ❌ Test Failed (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
-    const reviewLogs = testResult.logs || "Unknown failure";
-    const analysis = (await reviewer(reviewLogs)) as ReviewAnalysis;
-
-    feedback = `\nIssue: ${analysis.issue}\nFix: ${analysis.fix}\n`;
+    feedback = `빌드는 성공했지만 의미 검토에서 문제가 발견됐습니다:\n${semanticIssues.join("\n")}`;
     report.reviewer_history.push({ attempt: retryCount + 1, feedback });
-    console.log("  Reviewer Feedback:", feedback);
-
     retryCount++;
   }
 
   if (!success) {
-    console.log(`  FAILED after ${MAX_RETRIES} retries.`);
+    console.log(`\n  ❌ FAILED after ${MAX_RETRIES} attempts.`);
   }
 
   return success;
