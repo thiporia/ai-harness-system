@@ -64,6 +64,70 @@ Planner는 반드시 아래 항목을 포함해 계획을 수립한다.
   - 문서는 한국어 기준으로 사람이 읽기 쉽게 요약을 먼저 제공한다.
   - 원본 JSON은 문서 하단에 그대로 병기하여 추적 가능성을 유지한다.
 
+## Developer Decision Contract
+
+Developer는 단일 파일 생성을 금지한다. 반드시 아래 기준을 따른다.
+
+1. **Planner의 `folder_plan` 준수 의무**
+   - LLM이 반환한 파일 매니페스트를 `runDir/` 하위에 구조 그대로 저장한다.
+   - `src/app`, `src/features`, `src/components`, `src/shared` 등 플랜 구조를 반영한다.
+
+2. **npm 프로젝트 초기화 필수**
+   - `package.json` 을 생성하거나 LLM이 제공한 것을 저장한다.
+   - `runDir` 내에서 `npm install` 을 실행하여 의존성을 설치한다.
+   - 빌드 스크립트(`npm run build`)가 동작 가능한 상태여야 한다.
+
+3. **git 초기화 필수**
+   - `runDir` 내에서 `git init` 후 초기 커밋을 생성한다.
+   - 커밋 메시지: `feat: initial scaffold by Developer Agent`
+
+4. **LLM 파일 출력 형식**
+   - LLM은 파일 매니페스트를 아래 구분자 형식으로 반환한다:
+   ```
+   === FILE: <상대경로> ===
+   <파일 내용>
+   === END FILE ===
+   ```
+   - Developer는 이 형식을 파싱하여 각 파일을 `runDir/` 하위에 저장한다.
+
+5. **스택 준수**
+   - React + TypeScript + Vite 기반으로 스캐폴딩한다.
+   - Capacitor 설정(`capacitor.config.ts`)을 포함한다.
+   - plan의 `stack_decision.selected` 추가 기술을 반영한다.
+
+## Artifact Storage Contract
+
+산출물(생성된 제품 코드)은 실행마다 고유 폴더에 저장한다. **덮어쓰기는 금지한다.**
+
+### 폴더 구조
+
+```
+artifacts/
+  <run-id>/
+    package.json       # 프로젝트 설정
+    src/               # plan의 folder_plan 구조대로
+    BUILD_REPORT.md    # 생성 과정 상세 기록
+  latest/
+    (최신 run-id 산출물 복사본)
+    BUILD_REPORT.md
+```
+
+- `<run-id>` 형식: `YYYY-MM-DDTHH-MM-SS-mmmZ` (ISO 타임스탬프 기반)
+- `latest/` 는 매 실행 후 최신 산출물로 갱신한다.
+
+### BUILD_REPORT.md 필수 포함 항목
+
+각 run-id 폴더 내 `BUILD_REPORT.md`는 아래 항목을 반드시 기술한다.
+
+1. **메타데이터**: run_id, 생성 시각, 입력 컨셉
+2. **Planner 요약**: 주요 기능, 범위, 스택 결정 근거
+3. **Designer 요약**: 컴포넌트 구성, 참조한 디자인 레퍼런스
+4. **Developer 이력**: 총 시도 횟수, 각 시도별 Reviewer 피드백 내용
+5. **Quality Gate 결과**: 각 게이트 통과/실패 여부 및 로그
+6. **최종 상태**: 성공 / 부분 완료 / 실패 + 사유
+
+> 이 기록을 통해 생성물 간 개선 추이를 추적할 수 있어야 한다.
+
 ## Quality Gates
 
 최소 게이트:
