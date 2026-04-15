@@ -1,6 +1,6 @@
-# AI Harness System
+# AI Harness System(Draft)
 
-> 컨셉 한 줄을 입력하면 Multi-Agent AI가 실제 동작하는 프로젝트를 자동으로 생성합니다.
+> 컨셉 한 줄을 입력하면 Multi-Agent AI가 실제 동작하는 프로젝트를 자동으로 생성합니다. 
 
 ## 개요
 
