@@ -57,26 +57,26 @@ npm run start "ToDo 앱"
 ┌────────────────────────────────────────────────────────┐
 │                      Orchestrator                      │
 │                                                        │
-│  [1] Planner ──────────────────────────────────────   │
-│       이미지 첨부 시 Vision API 자동 사용              │
-│       Decompose: feature 목록 (LLM 1회)               │
-│       Execute:   feature당 상세 계획 (LLM N회 병렬)    │
-│       Review:    reviewPlan → 재기획 (최대 5회)        │
+│  [1] Planner ──────────────────────────────────────    │
+│       이미지 첨부 시 Vision API 자동 사용                 │
+│       Decompose: feature 목록 (LLM 1회)                 │
+│       Execute:   feature당 상세 계획 (LLM N회 병렬)       │
+│       Review:    reviewPlan → 재기획 (최대 5회)          │
 │            ↓                                           │
-│  [2] Designer ─────────────────────────────────────   │
-│       Decompose: component 목록 (LLM 1회)             │
-│       Execute:   component당 설계 (LLM N회 순차)       │
-│       Review:    reviewDesign → 재설계 (최대 5회)      │
-│            ↓ awesome-design-md 자동 참조               │
-│  [3] Developer ────────────────────────────────────   │
-│       Decompose: 파일 목록 + 목적 (LLM 1회)           │
-│       Execute:   파일당 코드 생성 (LLM N회 순차)       │
+│  [2] Designer ─────────────────────────────────────    │
+│       Decompose: component 목록 (LLM 1회)               │
+│       Execute:   component당 설계 (LLM N회 순차)         │
+│       Review:    reviewDesign → 재설계 (최대 5회)        │
+│            ↓ awesome-design-md 자동 참조                │
+│  [3] Developer ────────────────────────────────────    │
+│       Decompose: 파일 목록 + 목적 (LLM 1회)              │
+│       Execute:   파일당 코드 생성 (LLM N회 순차)          │
 │            ↓                                           │
-│  [4] Tester ───────────────────────────────────────   │
-│       npm run build → vite preview → HTTP 확인         │
+│  [4] Tester ───────────────────────────────────────    │
+│       npm run build → vite preview → HTTP 확인          │
 │       npx cap sync                                     │
-│       실패 → Reviewer → Developer 재시도 (최대 5회)    │
-│       성공 → Planner + Designer 병렬 의미 검토         │
+│       실패 → Reviewer → Developer 재시도 (최대 5회)       │
+│       성공 → Planner + Designer 병렬 의미 검토            │
 │            ↓                                           │
 │  [5] Quality Gate                                      │
 └────────────────────────────────────────────────────────┘
