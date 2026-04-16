@@ -35,8 +35,10 @@ const TEXT_EXTENSIONS = new Set([".md", ".txt", ".html", ".json", ".yaml", ".yml
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const PDF_EXTENSION = ".pdf";
 
-/** Planner에 전달할 텍스트 최대 길이 (토큰 절약) */
-const MAX_TEXT_CHARS = 3000;
+/** Planner에 전달할 텍스트 최대 길이
+ * 일반적인 PRD/기획서 전체를 수용하기 위해 8,000자로 설정.
+ * (약 2,000 토큰 — Planner Decompose 호출 입력 예산 내) */
+const MAX_TEXT_CHARS = 8000;
 /** 폴더 스캔 시 수집할 파일 최대 수 */
 const MAX_FOLDER_FILES = 5;
 
@@ -77,9 +79,7 @@ function readImageFile(filePath: string): ImageContent {
 async function extractPdfText(filePath: string): Promise<{ text: string; success: boolean }> {
   try {
     // pdf-parse는 선택적 의존성 — 없으면 graceful fallback
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mod = (await import("pdf-parse")) as any;
-    const pdfParse = mod.default ?? mod;
+    const { default: pdfParse } = await import("pdf-parse");
     const buffer = fs.readFileSync(filePath);
     const data = await pdfParse(buffer);
     return { text: data.text.slice(0, MAX_TEXT_CHARS), success: true };

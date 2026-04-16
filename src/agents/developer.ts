@@ -5,7 +5,7 @@
  * Execute:   파일당 코드 생성 (LLM N회, 즉시 디스크 기록)
  * Post:      npm install + git commit
  */
-import { callLLM } from "../utils/openai.js";
+import { callLLM, callLLMJson } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
 import fs from "fs";
@@ -42,7 +42,7 @@ function runShell(cmd: string, cwd: string): { success: boolean; output: string 
 // ── Step 1: Decompose ─────────────────────────────────────────
 // Plan + Design → 생성할 파일 목록 (코드 없음)
 
-async function decomposeFiles(plan: any, design: any, feedback?: string): Promise<FileSpec[]> {
+async function decomposeFilesOnce(plan: any, design: any, feedback?: string): Promise<FileSpec[]> {
   const context = getHarnessContext();
 
   const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
@@ -54,7 +54,7 @@ async function decomposeFiles(plan: any, design: any, feedback?: string): Promis
     ? `AdMob: banner=${plan.admob.banner}, interstitial=${plan.admob.interstitial}, rewarded=${plan.admob.rewarded}`
     : "";
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are a senior frontend developer planning a project. Output JSON only.
 
 Apply this harness context:
@@ -84,7 +84,7 @@ Return a JSON array of ALL files to generate:
   }
 ]
 
-Required files to include:
+Required files to include (ALWAYS):
 - package.json (with dev/build/preview scripts)
 - vite.config.ts
 - tsconfig.json
@@ -93,9 +93,22 @@ Required files to include:
 - src/App.tsx
 - capacitor.config.ts
 - src/services/admob.ts (AdMob init + banner/interstitial/rewarded helpers)
+- src/types/index.ts (shared types)
+- .env.example (all required env vars with empty values — VITE_ADMOB_APP_ID, and any backend keys)
 - One file per component from the component list
 - One hook file per major state concern
-- src/types/index.ts (shared types)
+
+Required files if stack includes "Firebase":
+- src/services/firebase.ts (initializeApp with getApps() guard, export db/auth instances)
+- src/services/firestore.ts (collection CRUD helpers)
+- src/services/auth.ts (Firebase Auth helpers)
+- src/services/fcm.ts (FCM token + permission request — only if push notifications needed)
+- public/firebase-messaging-sw.js (FCM service worker — only if FCM included)
+- .env.example must include: VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_STORAGE_BUCKET, VITE_FIREBASE_MESSAGING_SENDER_ID, VITE_FIREBASE_APP_ID
+
+Required files if stack includes "Tailwind":
+- tailwind.config.ts (content paths covering src/**/*.{tsx,ts})
+- postcss.config.js (with tailwindcss and autoprefixer plugins)
 
 Rules:
 - path: relative from project root, no leading slash
@@ -103,13 +116,29 @@ Rules:
 - exports: array of exported names (empty for config files)
 - imports_from: only files defined in THIS manifest
 - Do NOT include node_modules, lock files, or dist
-- Total: 10-30 files
+- Total: 10-35 files
 `
   );
 
   const parsed = parseJsonResponse<FileSpec[]>(res);
   if (!Array.isArray(parsed)) throw new Error("decomposeFiles: LLM did not return an array");
   return parsed;
+}
+
+/** decomposeFilesOnce를 최대 MAX_DECOMPOSE_RETRIES회 재시도 */
+const MAX_DECOMPOSE_RETRIES = 3;
+
+async function decomposeFiles(plan: any, design: any, feedback?: string): Promise<FileSpec[]> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= MAX_DECOMPOSE_RETRIES; attempt++) {
+    try {
+      return await decomposeFilesOnce(plan, design, feedback);
+    } catch (err) {
+      lastError = err as Error;
+      console.warn(`[decomposeFiles] attempt ${attempt}/${MAX_DECOMPOSE_RETRIES} failed: ${lastError.message}`);
+    }
+  }
+  throw new Error(`[decomposeFiles] 파일 목록 생성 ${MAX_DECOMPOSE_RETRIES}회 모두 실패: ${lastError?.message}`);
 }
 
 // ── Step 2: Execute ───────────────────────────────────────────
@@ -185,7 +214,11 @@ Output ONLY the raw file content.`
 // ── 파일 저장 ─────────────────────────────────────────────────
 
 function writeFile(filePath: string, content: string, outputDir: string) {
-  const absPath = path.join(outputDir, filePath);
+  const absOutputDir = path.resolve(outputDir);
+  const absPath = path.resolve(outputDir, filePath);
+  if (!absPath.startsWith(absOutputDir + path.sep) && absPath !== absOutputDir) {
+    throw new Error(`[Security] Path traversal detected: "${filePath}" escapes outputDir`);
+  }
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, content, "utf-8");
 }
@@ -273,41 +306,102 @@ export async function developer(
 
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // ── Phase 2: Execute — 파일당 LLM 1회 ────────────────────────
+  // ── Phase 2: Execute — Tier 기반 병렬 생성 ──────────────────
+  // Tier 1: 설정 파일 (의존성 없음)
+  // Tier 2: 공통 타입 + 서비스 (firebase, admob 등)
+  // Tier 3: 컴포넌트 + 훅 + 피처 (types/services 참조)
+  // Tier 4: 진입점 (App.tsx, main.tsx — 모두 참조)
+
+  function getTier(p: string): number {
+    const isConfig =
+      p === "package.json" ||
+      /\.(config|json|html|yaml|yml|example)$/.test(p) ||
+      /^(vite|tsconfig|tailwind|postcss|capacitor|index\.html|\.env)/.test(p.split("/").pop()!);
+    if (isConfig) return 1;
+
+    const isCore =
+      p.startsWith("src/types/") ||
+      p.startsWith("src/services/") ||
+      p.startsWith("src/store/") ||
+      p.startsWith("src/state/");
+    if (isCore) return 2;
+
+    const isEntry =
+      p === "src/main.tsx" ||
+      p === "src/main.ts" ||
+      p === "src/App.tsx" ||
+      p === "src/App.ts";
+    if (isEntry) return 4;
+
+    return 3; // components, hooks, features, pages
+  }
+
   const fileResults: GeneratedFile[] = [];
   const alreadyGenerated = new Map<string, string>(); // path → exports signature
 
-  for (let i = 0; i < fileSpecs.length; i++) {
-    const spec = fileSpecs[i]!;
-    console.log(`  [developer] [${i + 1}/${fileSpecs.length}] ${spec.path}`);
+  const processBatch = async (batch: FileSpec[], tierLabel: string) => {
+    if (batch.length === 0) return;
+    console.log(`  [developer] ${tierLabel} (${batch.length}파일 병렬)`);
+    await Promise.all(
+      batch.map(async (spec) => {
+        console.log(`  [developer]   → ${spec.path}`);
+        try {
+          const content = await generateFile(spec, fileSpecs, plan, design, alreadyGenerated);
+          writeFile(spec.path, content, outputDir);
+          const exportsSig = spec.exports.length > 0
+            ? spec.exports.join(", ")
+            : "(config/no exports)";
+          alreadyGenerated.set(spec.path, exportsSig);
+          fileResults.push({ spec, content, success: true });
+        } catch (err: any) {
+          console.warn(`  [developer] ⚠️  Failed: ${spec.path} — ${err?.message}`);
+          fileResults.push({ spec, content: "", success: false, error: err?.message });
+        }
+      })
+    );
+  };
 
-    try {
-      const content = await generateFile(spec, fileSpecs, plan, design, alreadyGenerated);
-      writeFile(spec.path, content, outputDir);
-
-      // exports 시그니처 기록 (다음 파일이 참조할 용도)
-      const exportsSig = spec.exports.length > 0
-        ? spec.exports.join(", ")
-        : "(config/no exports)";
-      alreadyGenerated.set(spec.path, exportsSig);
-
-      fileResults.push({ spec, content, success: true });
-    } catch (err: any) {
-      console.warn(`  [developer] ⚠️  Failed: ${spec.path} — ${err?.message}`);
-      fileResults.push({ spec, content: "", success: false, error: err?.message });
-    }
+  const tiers: Record<number, FileSpec[]> = { 1: [], 2: [], 3: [], 4: [] };
+  for (const spec of fileSpecs) {
+    const t = getTier(spec.path);
+    tiers[t]!.push(spec);
   }
+
+  await processBatch(tiers[1]!, "Tier 1 — 설정 파일");
+  await processBatch(tiers[2]!, "Tier 2 — 타입/서비스");
+  await processBatch(tiers[3]!, "Tier 3 — 컴포넌트/훅/피처");
+  await processBatch(tiers[4]!, "Tier 4 — 진입점");
 
   const successCount = fileResults.filter((r) => r.success).length;
   console.log(`  [developer] Generated ${successCount}/${fileSpecs.length} files.`);
 
   // ── Phase 3: npm install ──────────────────────────────────────
-  const npmResult = runShell("npm install --prefer-offline", outputDir);
+  const npmResult = runShell("npm install --ignore-scripts", outputDir);
   if (!npmResult.success) {
     console.warn("[developer] npm install failed:", npmResult.output);
   }
 
   // ── Phase 4: git init + commit ────────────────────────────────
+  // .gitignore 선생성 — LLM이 생성하지 않았더라도 민감 파일 보호
+  const gitignorePath = path.join(outputDir, ".gitignore");
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(
+      gitignorePath,
+      [
+        "node_modules/",
+        "dist/",
+        ".env",
+        ".env.local",
+        ".env.*.local",
+        "*.log",
+        ".DS_Store",
+        "android/",
+        "ios/",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+  }
   runShell("git init", outputDir);
   runShell("git add -A", outputDir);
   const gitResult = runShell(

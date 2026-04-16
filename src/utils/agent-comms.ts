@@ -90,7 +90,7 @@ export function extractBuildError(logs: string): string {
   // error/Error/ERROR 포함 라인 우선 수집
   for (let i = lines.length - 1; i >= 0 && errorLines.length < 3; i--) {
     const l = lines[i];
-    if (/error|Error|ERROR|failed|FAILED|✗|×/.test(l)) {
+    if (l && /error|Error|ERROR|failed|FAILED|✗|×/.test(l)) {
       errorLines.unshift(l);
     }
   }
@@ -169,10 +169,10 @@ export function readAcpSummary(filePath: string): string {
   if (!fs.existsSync(filePath)) return "";
   const raw = fs.readFileSync(filePath, "utf-8");
 
-  const summaryMatch = raw.match(/^## Summary\s*\n+([\s\S]*?)(?=^## |\Z)/m);
+  const summaryMatch = raw.match(/^## Summary\s*\n+([\s\S]*?)(?=\n## |\s*$)/m);
   if (!summaryMatch) return "";
   // 읽기 시 경고 없이 반환 (이미 저장 시점에 enforceSummaryBudget이 검증함)
-  return summaryMatch[1].trim();
+  return summaryMatch[1]?.trim() ?? "";
 }
 
 /**

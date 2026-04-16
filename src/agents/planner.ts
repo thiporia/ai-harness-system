@@ -5,7 +5,7 @@
  * Execute:   feature당 상세 계획 획득 (LLM N회)
  * Aggregate: 최종 Plan JSON 조합
  */
-import { callLLM, callLLMWithVision } from "../utils/openai.js";
+import { callLLMJson, callLLMWithVision } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
 import type { InputContext } from "../utils/input-resolver.js";
@@ -87,9 +87,13 @@ Return a project decomposition:
 Rules:
 - features: 3-8 items, each name ≤30 chars (no descriptions here)
 - scope items: ≤60 chars each, max 5 per list
-- selected: only essential libraries beyond the fixed baseline (Jotai, Supabase, etc.), max 3
+- selected: essential libraries beyond the fixed baseline (Jotai, Firebase, Supabase, Recharts, etc.), max 5
+  - If input mentions Firebase → include "Firebase" in selected; do NOT include Supabase
+  - If no backend mentioned → include "Supabase" as default
+  - Include charting library (Recharts) only if data visualization is explicitly required
 - folder_plan: must include "src/services" (for admob.ts), 5-8 paths total, each ≤30 chars
-- admob: choose triggers that feel natural, not disruptive. interstitial ≤20 chars, rewarded ≤30 chars
+- admob: if the input document specifies exact AdMob positions, use them verbatim; otherwise choose natural positions. interstitial ≤20 chars, rewarded ≤30 chars
+- PHASE SCOPE: if the input contains a phase directive (e.g. "Phase 1만 구현", "MVP only", "Phase 2·3는 out-of-scope"), you MUST restrict features to that phase only. Features from excluded phases go into out_of_scope, not features list.
 `;
 
   // 이미지가 있으면 vision API 사용 (와이어프레임, 스크린샷 등)
@@ -108,7 +112,7 @@ async function planFeature(
 ): Promise<FeatureItem> {
   const context = getHarnessContext();
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are a product planner defining ONE feature in detail. Output JSON only.
 
 Apply this harness context:
@@ -162,6 +166,25 @@ function aggregatePlan(
   };
 }
 
+// ── 동시성 제한 유틸 ─────────────────────────────────────────
+const CONCURRENCY_LIMIT = 3;
+
+async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIdx = 0;
+
+  async function worker() {
+    while (nextIdx < items.length) {
+      const idx = nextIdx++;
+      results[idx] = await fn(items[idx]!, idx);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 // ── Public API ────────────────────────────────────────────────
 
 export async function planner(ctx: InputContext, feedback?: string): Promise<PlanResult> {
@@ -171,13 +194,11 @@ export async function planner(ctx: InputContext, feedback?: string): Promise<Pla
   }
   const base = await decomposeFeatures(ctx, feedback);
 
-  console.log(`  [planner] Planning ${base.features.length} features individually...`);
-  const featureDetails = await Promise.all(
-    base.features.map((name, i) => {
-      console.log(`  [planner] Feature ${i + 1}/${base.features.length}: "${name}"`);
-      return planFeature(name, ctx.textContent, base.features, base.stack_decision.selected);
-    })
-  );
+  console.log(`  [planner] Planning ${base.features.length} features individually (concurrency=${CONCURRENCY_LIMIT})...`);
+  const featureDetails = await mapWithLimit(base.features, CONCURRENCY_LIMIT, (name, i) => {
+    console.log(`  [planner] Feature ${i + 1}/${base.features.length}: "${name}"`);
+    return planFeature(name, ctx.textContent, base.features, base.stack_decision.selected);
+  });
 
   const plan = aggregatePlan(base, featureDetails);
   console.log(`  [planner] Done — ${plan.features.length} features planned.`);

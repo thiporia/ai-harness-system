@@ -1,4 +1,4 @@
-import { callLLM } from "../utils/openai.js";
+import { callLLMJson } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
 import { extractBuildError } from "../utils/agent-comms.js";
@@ -11,7 +11,7 @@ export async function reviewer(logs: string) {
   // 에러 핵심 3줄만 추출 (전체 로그 전달 금지)
   const errorSnippet = extractBuildError(logs);
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You analyze build/test errors and suggest fixes. Output JSON only — no prose, no markdown.
 
 Apply this harness context:
@@ -47,7 +47,7 @@ export async function reviewPlan(plan: any): Promise<{ approved: boolean; feedba
     acceptance_test_count: (plan.acceptance_tests ?? []).length,
   };
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are a critical product reviewer. Review the project plan strictly.
 Catch missing scope, unrealistic goals, incomplete acceptance tests, misaligned stack.
 
@@ -85,7 +85,7 @@ export async function reviewCodeVsPlan(
 
   const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are reviewing whether a plan was faithfully implemented.
 Check if all planned features exist in the generated code.
 
@@ -120,7 +120,7 @@ export async function reviewCodeVsDesign(
 
   const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unnamed");
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are reviewing whether a component design was faithfully implemented.
 Check if all designed components exist in the generated code.
 
@@ -153,7 +153,7 @@ export async function reviewDesign(plan: any, design: any): Promise<{ approved: 
   const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
   const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unnamed");
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are a critical design reviewer. Review the component design against the plan.
 Catch missing components, misaligned props, and design gaps.
 

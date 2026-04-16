@@ -5,7 +5,7 @@
  * Execute:   component당 상세 설계 획득 (LLM N회)
  * Aggregate: 최종 Design JSON 조합
  */
-import { callLLM } from "../utils/openai.js";
+import { callLLMJson } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
 
@@ -119,7 +119,7 @@ async function decomposeComponents(plan: any, feedback?: string): Promise<string
   const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f)).join(", ");
   const feedbackSection = feedback ? `\nFeedback to address:\n${feedback}` : "";
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are a UI designer. Output JSON only.
 
 Apply this harness context:
@@ -172,7 +172,7 @@ async function designComponent(
 
   const refSection = designRef ? `\nDesign Reference:\n${designRef}` : "";
 
-  const res = await callLLM(
+  const res = await callLLMJson(
     `You are a UI component designer. Output JSON only.
 
 Apply this harness context:

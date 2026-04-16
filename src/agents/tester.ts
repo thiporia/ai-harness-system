@@ -115,7 +115,7 @@ export async function tester(runDir: string = "./artifacts"): Promise<TestResult
   const nmPath = path.join(runDir, "node_modules");
   if (!fs.existsSync(nmPath)) {
     logs.push("[tester] Running npm install...");
-    const installResult = runShell("npm install --prefer-offline", runDir);
+    const installResult = runShell("npm install --ignore-scripts", runDir);
     logs.push(installResult.output);
     if (!installResult.success) {
       return { success: false, logs: `npm install failed:\n${logs.join("\n")}` };
