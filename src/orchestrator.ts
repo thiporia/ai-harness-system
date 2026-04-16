@@ -23,6 +23,13 @@ import {
   enforceSummaryBudget,
   truncateForArchive,
 } from "./utils/agent-comms.js";
+import {
+  saveCheckpoint,
+  loadCheckpoint,
+  resolveRunTarget,
+  type CompletedStage,
+} from "./utils/checkpoint.js";
+import { resolveInput, type InputContext } from "./utils/input-resolver.js";
 import fs from "fs";
 import path from "path";
 
@@ -39,6 +46,7 @@ interface Plan {
   stack_decision?: { fixed?: string[]; selected?: string[]; rationale?: string[] };
   device_targets?: string[];
   scope?: { in_scope: string[]; out_of_scope: string[] };
+  admob?: { banner: string; interstitial: string; rewarded: string };
 }
 
 interface Design {
@@ -319,12 +327,15 @@ ${JSON.stringify(design, null, 2)}
 // ── 단계별 실행 ────────────────────────────────────────────────
 
 async function executePlanningStage(
-  input: string,
+  inputCtx: InputContext,
   runId: string,
   report: BuildReport
 ): Promise<Plan> {
   console.log("\n[1/5] Planning...");
-  let plan = (await planner(input)) as Plan;
+  if (inputCtx.type !== "text") {
+    console.log(`  [input] type=${inputCtx.type}, images=${inputCtx.images.length}, sourceFiles=${inputCtx.sourceFiles.length}`);
+  }
+  let plan = (await planner(inputCtx)) as Plan;
   console.log("PLAN:", JSON.stringify(plan, null, 2));
 
   // ACP: 01-planner-output.md
@@ -332,7 +343,9 @@ async function executePlanningStage(
     frontmatter: { from: "planner", to: "orchestrator", type: "output", run_id: runId, attempt: 1, status: "info" },
     summary: buildPlanSummary(plan),
     details: truncateForArchive(JSON.stringify(plan, null, 2)),
-    references: [`docs/artifacts/history/<run-id>-plan.md`],
+    references: inputCtx.sourceFiles.length
+      ? inputCtx.sourceFiles
+      : [`docs/artifacts/history/<run-id>-plan.md`],
   });
   console.log(`  → ACP: ${plannerAcpPath}`);
 
@@ -367,9 +380,9 @@ async function executePlanningStage(
       break;
     }
 
-    // 다음 Planner 호출 시 ACP Summary만 전달 (원본 JSON 아님)
+    // 다음 Planner 호출 시 ACP Summary만 feedback으로 전달 (이미지는 유지)
     const reviewSummary = readAcpSummary(reviewAcpPath);
-    plan = (await planner(input, reviewSummary)) as Plan;
+    plan = (await planner(inputCtx, reviewSummary)) as Plan;
 
     // ACP 업데이트
     writeAcpFile(runId, "01-planner-output.md", {
@@ -452,12 +465,18 @@ async function executeDevelopmentLoop(
   design: Design,
   runId: string,
   runDir: string,
-  report: BuildReport
+  report: BuildReport,
+  startAttempt = 0,
+  initialFeedback = "",
+  onAttemptDone?: (attempt: number, feedback: string) => void
 ): Promise<boolean> {
   console.log("\n[3-4/5] Developing + Testing...");
+  if (startAttempt > 0) {
+    console.log(`  (Resuming from attempt ${startAttempt + 1}/${MAX_RETRIES})`);
+  }
   let success = false;
-  let retryCount = 0;
-  let feedback = "";
+  let retryCount = startAttempt;
+  let feedback = initialFeedback;
 
   while (!success && retryCount < MAX_RETRIES) {
     const attempt = retryCount + 1;
@@ -513,6 +532,7 @@ async function executeDevelopmentLoop(
         references: [`artifacts/${runId}/build-${attempt}.log`],
       });
       report.reviewer_history.push({ attempt, feedback, acpFile: fbAcpPath });
+      onAttemptDone?.(attempt, feedback);
       retryCount++;
       continue;
     }
@@ -565,6 +585,7 @@ async function executeDevelopmentLoop(
         references: [`artifacts/${runId}/build-${attempt}.log`],
       });
       report.reviewer_history.push({ attempt, feedback, acpFile: fbAcpPath });
+      onAttemptDone?.(attempt, feedback);
       retryCount++;
       continue;
     }
@@ -624,6 +645,7 @@ async function executeDevelopmentLoop(
     // ACP Summary만 feedback으로 전달
     feedback = readAcpSummary(semanticAcpPath);
     report.reviewer_history.push({ attempt, feedback, acpFile: semanticAcpPath });
+    onAttemptDone?.(attempt, feedback);
     retryCount++;
   }
 
@@ -661,36 +683,107 @@ function runQualityGates(testLogs: string): QualityGateResult {
 
 // ── 메인 ──────────────────────────────────────────────────────
 
-async function runOrchestrator(input: string): Promise<void> {
-  const runId = getRunId();
+async function runOrchestrator(
+  input: string,
+  resumeRunId?: string
+): Promise<void> {
+  // run-id 및 checkpoint 결정
+  const runId = resumeRunId ?? getRunId();
   const runDir = path.join(ARTIFACTS_DIR, runId);
-  const report = initBuildReport(runId, input);
+  const checkpoint = resumeRunId ? loadCheckpoint(runDir) : null;
+  const completedStage: CompletedStage = checkpoint?.completed_stage ?? "none";
+
+  // 입력 소스 해석 (텍스트 / 파일 / 이미지 / 폴더)
+  const inputCtx = await resolveInput(input);
+
+  const report = initBuildReport(runId, inputCtx.rawInput);
+  report.acp_dir = `docs/agent-comms/${runId}`;
+
+  const isResume = !!checkpoint;
+  const resumeLabel = isResume ? ` [RESUME from: ${completedStage}]` : "";
 
   console.log(`\n${"=".repeat(60)}`);
-  console.log(`[run: ${runId}]`);
-  console.log(`Input: "${input}"`);
+  console.log(`[run: ${runId}]${resumeLabel}`);
+  console.log(`Input: "${inputCtx.rawInput}" (type: ${inputCtx.type})`);
   console.log(`Output: ${runDir}`);
   console.log(`ACP: docs/agent-comms/${runId}/`);
   console.log("=".repeat(60));
 
   try {
-    // [1] Planning + cross-review
-    const plan = await executePlanningStage(input, runId, report);
+    let plan: Plan;
+    let design: Design;
 
-    // [2] Designing (awesome-design-md) + review
-    const design = await executeDesigningStage(plan, runId, report);
+    // ── [1] Planning ───────────────────────────────────────────
+    if (completedStage === "none") {
+      plan = await executePlanningStage(inputCtx, runId, report);
+      saveCheckpoint(runDir, {
+        run_id: runId,
+        input: inputCtx.rawInput,
+        completed_stage: "planner",
+        developer_attempt: 0,
+        plan,
+        design: null,
+        feedback: "",
+      });
+    } else {
+      console.log("\n[1/5] Planning... ✅ (skipped — checkpoint restored)");
+      plan = checkpoint!.plan as Plan;
+      report.planner_summary = buildPlanSummary(plan);
+    }
 
-    persistPlanningDocs(input, plan, design);
-    console.log(`\nPlanning documents saved under ${DOC_ARTIFACTS_DIR}`);
+    // ── [2] Designing ──────────────────────────────────────────
+    if (completedStage === "none" || completedStage === "planner") {
+      design = await executeDesigningStage(plan, runId, report);
+      persistPlanningDocs(inputCtx.rawInput, plan, design);
+      saveCheckpoint(runDir, {
+        run_id: runId,
+        input: inputCtx.rawInput,
+        completed_stage: "designer",
+        developer_attempt: 0,
+        plan,
+        design,
+        feedback: "",
+      });
+      console.log(`\nPlanning documents saved under ${DOC_ARTIFACTS_DIR}`);
+    } else {
+      console.log("\n[2/5] Designing... ✅ (skipped — checkpoint restored)");
+      design = checkpoint!.design as Design;
+      report.designer_summary = buildDesignSummary(design);
+    }
 
     fs.mkdirSync(runDir, { recursive: true });
     saveBuildReport(runDir, report);
 
-    // [3-4] Development + Testing loop
-    const developmentSuccessful = await executeDevelopmentLoop(plan, design, runId, runDir, report);
+    // ── [3-4] Development + Testing ────────────────────────────
+    // 이전 시도 횟수와 마지막 feedback을 checkpoint에서 복원
+    const startAttempt = completedStage === "developer" ? (checkpoint!.developer_attempt ?? 0) : 0;
+    const initialFeedback = completedStage === "developer" ? (checkpoint!.feedback ?? "") : "";
 
+    // executeDevelopmentLoop에 재개 정보를 전달
+    const developmentSuccessful = await executeDevelopmentLoop(
+      plan,
+      design,
+      runId,
+      runDir,
+      report,
+      startAttempt,
+      initialFeedback,
+      (attempt, feedback) => {
+        // 각 시도 후 checkpoint 갱신
+        saveCheckpoint(runDir, {
+          run_id: runId,
+          input,
+          completed_stage: "developer",
+          developer_attempt: attempt,
+          plan,
+          design,
+          feedback,
+        });
+      }
+    );
+
+    // ── [5] Quality Gate ───────────────────────────────────────
     if (developmentSuccessful) {
-      // [5] Quality Gate
       console.log("\n[5/5] Quality Gate...");
       const finalTest: TestResult = await tester(runDir);
       const qualityGate = runQualityGates(finalTest.logs ?? "");
@@ -710,10 +803,22 @@ async function runOrchestrator(input: string): Promise<void> {
       report.failure_reason = `최대 재시도(${MAX_RETRIES}회) 초과`;
       console.log("❌ Orchestration halted: failed within retries.");
     }
+
+    // 완료 checkpoint
+    saveCheckpoint(runDir, {
+      run_id: runId,
+      input,
+      completed_stage: "done",
+      developer_attempt: report.developer_attempts,
+      plan,
+      design,
+      feedback: "",
+    });
   } catch (error) {
     report.final_status = "failed";
     report.failure_reason = error instanceof Error ? error.message : String(error);
     console.error("\nOrchestration Error:", report.failure_reason);
+    // 오류 시 checkpoint는 마지막 저장 상태를 유지 (덮어쓰지 않음)
   } finally {
     saveBuildReport(runDir, report);
     copyToLatest(runDir);
@@ -723,6 +828,7 @@ async function runOrchestrator(input: string): Promise<void> {
   }
 }
 
-// CLI 인자 처리
-const userInput = process.argv[2] ?? DEFAULT_APP_INPUT;
-runOrchestrator(userInput);
+// ── CLI 진입점 ────────────────────────────────────────────────
+
+const target = resolveRunTarget(process.argv, DEFAULT_APP_INPUT);
+runOrchestrator(target.input, target.resume ? (target.runId ?? undefined) : undefined);

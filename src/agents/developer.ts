@@ -50,6 +50,9 @@ async function decomposeFiles(plan: any, design: any, feedback?: string): Promis
   const folderPlan = (plan.folder_plan ?? []).join(", ");
   const stackSelected = (plan.stack_decision?.selected ?? []).join(", ");
   const feedbackSection = feedback ? `\nPrevious reviewer feedback:\n${feedback}` : "";
+  const admob = plan.admob
+    ? `AdMob: banner=${plan.admob.banner}, interstitial=${plan.admob.interstitial}, rewarded=${plan.admob.rewarded}`
+    : "";
 
   const res = await callLLM(
     `You are a senior frontend developer planning a project. Output JSON only.
@@ -62,7 +65,8 @@ Create a complete file manifest for this React+TypeScript+Vite+Capacitor project
 Features: ${featureNames.join(", ")}
 Components to implement: ${componentNames.join(", ")}
 Folder structure: ${folderPlan}
-Extra stack: ${stackSelected || "none"}${feedbackSection}
+Extra stack: ${stackSelected || "none"}
+${admob}${feedbackSection}
 
 Return a JSON array of ALL files to generate:
 [
@@ -73,10 +77,10 @@ Return a JSON array of ALL files to generate:
     "imports_from": []
   },
   {
-    "path": "src/components/TodoList.tsx",
-    "purpose": "renders the list of todo items",
-    "exports": ["TodoList"],
-    "imports_from": ["src/types/index.ts", "src/hooks/useTodos.ts"]
+    "path": "src/services/admob.ts",
+    "purpose": "AdMob initialization and ad show helpers",
+    "exports": ["initAdMob", "showBanner", "showInterstitial", "showRewarded"],
+    "imports_from": []
   }
 ]
 
@@ -88,6 +92,7 @@ Required files to include:
 - src/main.tsx
 - src/App.tsx
 - capacitor.config.ts
+- src/services/admob.ts (AdMob init + banner/interstitial/rewarded helpers)
 - One file per component from the component list
 - One hook file per major state concern
 - src/types/index.ts (shared types)

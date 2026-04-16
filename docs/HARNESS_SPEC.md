@@ -44,7 +44,17 @@ Planner는 반드시 아래 항목을 포함해 계획을 수립한다.
   - `tests`
   - `docs`
 
-5. Acceptance Tests
+5. AdMob 광고 배치
+- 모바일 앱에 AdMob 광고를 반드시 포함한다.
+- 광고 유형과 위치는 UX를 해치지 않는 이상적인 위치로 선정한다.
+- 권장 배치 기준:
+  - **Banner**: 화면 하단 고정 (앱 전체 공통)
+  - **Interstitial**: 주요 Action 완료 후 (예: 항목 저장, 단계 완료)
+  - **Rewarded**: 프리미엄 기능 잠금 해제 또는 콘텐츠 추가 제공 시
+- `src/services/admob.ts`에 광고 초기화 및 호출 로직을 분리한다.
+- AdMob App ID는 환경 변수(`VITE_ADMOB_APP_ID`)로 관리한다.
+
+6. Acceptance Tests
 - 검증 가능한 시나리오 기반으로 작성한다.
 
 ## Engineering Rules

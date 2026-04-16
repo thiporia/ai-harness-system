@@ -5,14 +5,21 @@
  * Execute:   feature당 상세 계획 획득 (LLM N회)
  * Aggregate: 최종 Plan JSON 조합
  */
-import { callLLM } from "../utils/openai.js";
+import { callLLM, callLLMWithVision } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
+import type { InputContext } from "../utils/input-resolver.js";
 
 interface FeatureItem {
   name: string;
   description: string;
   acceptance_tests: string[];
+}
+
+interface AdMobPlan {
+  banner: string;
+  interstitial: string;
+  rewarded: string;
 }
 
 interface PlanResult {
@@ -22,28 +29,30 @@ interface PlanResult {
   folder_plan: string[];
   features: FeatureItem[];
   acceptance_tests: Array<{ feature: string; tests: string[] }>;
+  admob: AdMobPlan;
 }
 
 // ── Step 1: Decompose ─────────────────────────────────────────
 // 사용자 컨셉에서 feature 이름 목록과 스택/폴더 기본값 획득 (짧은 호출)
 
-async function decomposeFeatures(input: string, feedback?: string): Promise<{
+async function decomposeFeatures(ctx: InputContext, feedback?: string): Promise<{
   features: string[];
   scope: { in_scope: string[]; out_of_scope: string[] };
   device_targets: string[];
   stack_decision: { fixed: string[]; selected: string[]; rationale: string[] };
   folder_plan: string[];
+  admob: AdMobPlan;
 }> {
   const context = getHarnessContext();
   const feedbackSection = feedback ? `\nPrevious feedback:\n${feedback}` : "";
 
-  const res = await callLLM(
-    `You are a product planner. Output JSON only — no prose, no markdown.
+  const systemPrompt = `You are a product planner. Output JSON only — no prose, no markdown.
 
 Apply this harness context:
-${context}`,
-    `
-App concept: ${input}${feedbackSection}
+${context}`;
+
+  const userPrompt = `
+App concept: ${ctx.textContent}${feedbackSection}
 
 Return a project decomposition:
 {
@@ -65,18 +74,26 @@ Return a project decomposition:
     "src/shared",
     "src/hooks",
     "src/types",
+    "src/services",
     "tests"
-  ]
+  ],
+  "admob": {
+    "banner": "bottom of screen, app-wide",
+    "interstitial": "<trigger: e.g. after saving an item>",
+    "rewarded": "<trigger: e.g. unlock premium feature>"
+  }
 }
 
 Rules:
 - features: 3-8 items, each name ≤30 chars (no descriptions here)
 - scope items: ≤60 chars each, max 5 per list
 - selected: only essential libraries beyond the fixed baseline (Jotai, Supabase, etc.), max 3
-- folder_plan: 5-8 paths, each ≤30 chars
-`
-  );
+- folder_plan: must include "src/services" (for admob.ts), 5-8 paths total, each ≤30 chars
+- admob: choose triggers that feel natural, not disruptive. interstitial ≤20 chars, rewarded ≤30 chars
+`;
 
+  // 이미지가 있으면 vision API 사용 (와이어프레임, 스크린샷 등)
+  const res = await callLLMWithVision(systemPrompt, userPrompt, ctx.images);
   return parseJsonResponse(res);
 }
 
@@ -141,20 +158,24 @@ function aggregatePlan(
     folder_plan: base.folder_plan,
     features,
     acceptance_tests,
+    admob: base.admob,
   };
 }
 
 // ── Public API ────────────────────────────────────────────────
 
-export async function planner(input: string, feedback?: string): Promise<PlanResult> {
+export async function planner(ctx: InputContext, feedback?: string): Promise<PlanResult> {
   console.log("  [planner] Decomposing features...");
-  const base = await decomposeFeatures(input, feedback);
+  if (ctx.images.length > 0) {
+    console.log(`  [planner] Vision mode: ${ctx.images.length} image(s) attached.`);
+  }
+  const base = await decomposeFeatures(ctx, feedback);
 
   console.log(`  [planner] Planning ${base.features.length} features individually...`);
   const featureDetails = await Promise.all(
     base.features.map((name, i) => {
       console.log(`  [planner] Feature ${i + 1}/${base.features.length}: "${name}"`);
-      return planFeature(name, input, base.features, base.stack_decision.selected);
+      return planFeature(name, ctx.textContent, base.features, base.stack_decision.selected);
     })
   );
 

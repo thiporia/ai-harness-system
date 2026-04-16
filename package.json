@@ -1,6 +1,6 @@
 {
   "name": "ai-harness-system",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -9,6 +9,7 @@
     "build:artifact": "node scripts/build-artifact.js",
     "build:versioned": "npm run version:bump && npm run build",
     "start": "node dist/orchestrator.js",
+    "resume": "node dist/orchestrator.js --resume",
     "test": "vitest run --pool=threads --maxWorkers=1",
     "test:watch": "vitest --pool=threads --maxWorkers=1"
   },
@@ -32,6 +33,7 @@
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "openai": "^6.34.0"
+    "openai": "^6.34.0",
+    "pdf-parse": "^1.1.1"
   }
 }
