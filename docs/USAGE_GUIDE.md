@@ -9,7 +9,7 @@
 1. [이 시스템이 하는 일](#1-이-시스템이-하는-일)
 2. [사전 요구사항](#2-사전-요구사항)
 3. [설치 및 설정](#3-설치-및-설정)
-4. [실행 방법](#4-실행-방법)
+4. [실행 방법](#4-실행-방법) — 텍스트 / 멀티모달 입력 / Resume
 5. [Agent 상세](#5-agent-상세)
 6. [ACP — Agent 간 소통 방식](#6-acp--agent-간-소통-방식)
 7. [산출물 읽는 법](#7-산출물-읽는-법)
@@ -21,10 +21,13 @@
 
 ## 1. 이 시스템이 하는 일
 
-AI Harness System은 **"컨셉 텍스트 한 줄"로 완성된 React + TypeScript + Vite + Capacitor 프로젝트를 자동 생성**합니다.
+AI Harness System은 **텍스트 컨셉, 기획 문서, 와이어프레임 이미지, 또는 폴더로 완성된 React + TypeScript + Vite + Capacitor 프로젝트를 자동 생성**합니다.
 
 ```bash
 npm run start "운동 루틴을 기록하고 주간 통계를 보여주는 앱"
+npm run start ./docs/app-brief.md      # 기획서 파일
+npm run start ./wireframe.png          # 와이어프레임 이미지
+npm run start ./project-brief/         # 폴더
 ```
 
 실행 결과로 `artifacts/<run-id>/` 아래에 즉시 실행 가능한 프로젝트가 생성됩니다.
@@ -109,13 +112,13 @@ npm run build
 
 ## 4. 실행 방법
 
-### 기본 실행
+### 4-1. 텍스트 컨셉
 
 ```bash
 npm run start "<앱 컨셉>"
 ```
 
-컨셉은 한국어/영어 모두 가능합니다. 구체적일수록 더 정확한 결과가 나옵니다.
+한국어/영어 모두 가능합니다. 구체적일수록 더 정확한 결과가 나옵니다.
 
 ```bash
 npm run start "가족이 함께 쓰는 장보기 목록 앱"
@@ -124,6 +127,58 @@ npm run start "React Todo App with CRUD and local storage"
 ```
 
 컨셉을 생략하면 기본값 `React Todo App with CRUD`로 실행됩니다.
+
+### 4-2. 멀티모달 입력
+
+텍스트 외에 파일·이미지·폴더를 그대로 입력할 수 있습니다.
+
+| 입력 | 예시 | 처리 |
+|------|------|------|
+| 마크다운 기획서 | `npm run start ./docs/brief.md` | 최대 3,000자 자동 추출 |
+| 일반 텍스트 | `npm run start ./spec.txt` | 동일 |
+| PDF | `npm run start ./brief.pdf` | pdf-parse 텍스트 추출 |
+| 이미지(PNG/JPG 등) | `npm run start ./wireframe.png` | base64 → Vision API |
+| 폴더 | `npm run start ./project-brief/` | 우선순위 스캔, 최대 5개 파일 |
+
+**이미지를 입력하면** Planner가 `callLLMWithVision`으로 자동 전환됩니다. OpenAI는 `image_url` 방식, Gemini는 `inlineData` 방식으로 각각 처리됩니다.
+
+**폴더를 입력하면** `README.md`, `brief.md`, `spec.md` 등 기획 관련 파일을 우선 선택하고, 이미지 파일이 있으면 함께 Vision API로 전달합니다.
+
+### 4-3. Resume (중단 재개)
+
+실행 도중 종료되어도 완료된 단계는 건너뛰고 이어서 실행합니다.
+
+```bash
+# 가장 최근 미완료 실행 자동 재개
+npm run resume
+
+# run-id 직접 지정
+node dist/orchestrator.js --resume --run-id 2026-04-15T09-00-00-000Z
+```
+
+체크포인트 파일은 `artifacts/<run-id>/checkpoint.json`에 저장됩니다.
+
+```json
+{
+  "run_id": "2026-04-15T09-00-00-000Z",
+  "input": "./wireframe.png",
+  "completed_stage": "designer",
+  "developer_attempt": 0,
+  "plan": { ... },
+  "design": { ... },
+  "feedback": ""
+}
+```
+
+`completed_stage` 값에 따라 건너뛰는 단계가 결정됩니다.
+
+| 값 | 재시작 시 건너뛰는 단계 |
+|----|----------------------|
+| `"none"` | 없음 (처음부터) |
+| `"planner"` | Planner |
+| `"designer"` | Planner + Designer |
+| `"developer"` | Planner + Designer, Developer는 마지막 시도 횟수부터 |
+| `"done"` | 완료된 실행 (재개 대상 아님) |
 
 ### 실행 중 콘솔 출력
 
@@ -220,6 +275,8 @@ npm run preview  # 빌드 결과 미리보기
   ]
 }
 ```
+
+**Vision 모드**: 이미지가 포함된 `InputContext`를 받으면 `callLLMWithVision`으로 자동 전환. 피드백 루프에서도 동일 이미지가 유지됩니다.
 
 **검토**: `reviewPlan`이 scope, stack, acceptance_tests 기준으로 심사. 미통과 시 피드백과 함께 최대 5회 재기획.
 
@@ -509,6 +566,18 @@ Developer가 존재하지 않는 패키지를 `package.json`에 추가한 경우
 
 콘솔에 이 경고가 출력되면 해당 Agent의 LLM 프롬프트 글자 수 제한을 더 엄격하게 수정해야 합니다. 절단되지 않은 원본이 그대로 사용되므로 즉각적인 오류는 없지만 다음 LLM 호출의 컨텍스트가 커질 수 있습니다.
 
+### 이미지 입력이 무시되는 것 같을 때
+
+- `gpt-4o-mini`는 vision 지원이 제한적일 수 있습니다. `OPENAI_MODEL=gpt-4o`로 전환해 봅니다.
+- Gemini를 사용하는 경우 `gemini-2.5-flash`는 이미지를 지원합니다.
+- 콘솔에 `[planner] Vision mode: N image(s) attached.` 출력 여부로 vision 모드 진입을 확인할 수 있습니다.
+
+### Resume 후 "checkpoint not found"
+
+- `artifacts/<run-id>/checkpoint.json`이 없으면 재개할 수 없습니다.
+- `npm run resume`은 `artifacts/` 디렉토리를 최신순으로 스캔해 `completed_stage !== "done"`인 가장 최근 실행을 자동 선택합니다.
+- 모든 실행이 `"done"` 상태라면 재개 대상이 없어 새 실행을 시작해야 합니다.
+
 ### Quality Gate 실패 (partial 상태)
 
 빌드와 E2E는 통과했지만 하네스 자체 빌드 확인에서 실패한 경우입니다.
@@ -532,7 +601,9 @@ src/
     reviewer.ts            ← 단계별 품질 검토
   utils/
     agent-comms.ts         ← ACP 파일 I/O (writeAcpFile, enforceSummaryBudget 등)
-    openai.ts              ← LLM 호출 공통 인터페이스
+    openai.ts              ← LLM 호출 (callLLM, callLLMWithVision)
+    input-resolver.ts      ← 멀티모달 입력 해석 (텍스트/파일/이미지/폴더 → InputContext)
+    checkpoint.ts          ← 체크포인트 저장/로드, resumeRunTarget 파싱
     harness-context.ts     ← HARNESS_SPEC.md 내용을 LLM 컨텍스트로 주입
     json.ts                ← LLM JSON 응답 파싱
 
