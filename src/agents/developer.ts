@@ -15,9 +15,9 @@ import { execSync } from "child_process";
 // ── 타입 ────────────────────────────────────────────────────────
 
 interface FileSpec {
-  path: string;           // 상대 경로 (예: src/components/TodoList.tsx)
-  purpose: string;        // 한 줄 설명
-  exports: string[];      // export할 식별자 목록
+  path: string; // 상대 경로 (예: src/components/TodoList.tsx)
+  purpose: string; // 한 줄 설명
+  exports: string[]; // export할 식별자 목록
   imports_from?: string[]; // 의존하는 파일 경로 (컨텍스트 공유용)
 }
 
@@ -30,9 +30,16 @@ interface GeneratedFile {
 
 // ── Shell 유틸 ────────────────────────────────────────────────
 
-function runShell(cmd: string, cwd: string): { success: boolean; output: string } {
+function runShell(
+  cmd: string,
+  cwd: string,
+): { success: boolean; output: string } {
   try {
-    const output = execSync(cmd, { cwd, stdio: "pipe", timeout: 120_000 }).toString();
+    const output = execSync(cmd, {
+      cwd,
+      stdio: "pipe",
+      timeout: 120_000,
+    }).toString();
     return { success: true, output };
   } catch (err: any) {
     return { success: false, output: err?.stderr?.toString() ?? String(err) };
@@ -42,14 +49,24 @@ function runShell(cmd: string, cwd: string): { success: boolean; output: string 
 // ── Step 1: Decompose ─────────────────────────────────────────
 // Plan + Design → 생성할 파일 목록 (코드 없음)
 
-async function decomposeFilesOnce(plan: any, design: any, feedback?: string): Promise<FileSpec[]> {
+async function decomposeFilesOnce(
+  plan: any,
+  design: any,
+  feedback?: string,
+): Promise<FileSpec[]> {
   const context = getHarnessContext();
 
-  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
-  const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unknown");
+  const featureNames = (plan.features ?? []).map(
+    (f: any) => f?.name ?? String(f),
+  );
+  const componentNames = (design.components ?? []).map(
+    (c: any) => c?.name ?? "unknown",
+  );
   const folderPlan = (plan.folder_plan ?? []).join(", ");
   const stackSelected = (plan.stack_decision?.selected ?? []).join(", ");
-  const feedbackSection = feedback ? `\nPrevious reviewer feedback:\n${feedback}` : "";
+  const feedbackSection = feedback
+    ? `\nPrevious reviewer feedback:\n${feedback}`
+    : "";
   const admob = plan.admob
     ? `AdMob: banner=${plan.admob.banner}, interstitial=${plan.admob.interstitial}, rewarded=${plan.admob.rewarded}`
     : "";
@@ -117,28 +134,37 @@ Rules:
 - imports_from: only files defined in THIS manifest
 - Do NOT include node_modules, lock files, or dist
 - Total: 10-35 files
-`
+`,
   );
 
   const parsed = parseJsonResponse<FileSpec[]>(res);
-  if (!Array.isArray(parsed)) throw new Error("decomposeFiles: LLM did not return an array");
+  if (!Array.isArray(parsed))
+    throw new Error("decomposeFiles: LLM did not return an array");
   return parsed;
 }
 
 /** decomposeFilesOnce를 최대 MAX_DECOMPOSE_RETRIES회 재시도 */
 const MAX_DECOMPOSE_RETRIES = 3;
 
-async function decomposeFiles(plan: any, design: any, feedback?: string): Promise<FileSpec[]> {
+async function decomposeFiles(
+  plan: any,
+  design: any,
+  feedback?: string,
+): Promise<FileSpec[]> {
   let lastError: Error | undefined;
   for (let attempt = 1; attempt <= MAX_DECOMPOSE_RETRIES; attempt++) {
     try {
       return await decomposeFilesOnce(plan, design, feedback);
     } catch (err) {
       lastError = err as Error;
-      console.warn(`[decomposeFiles] attempt ${attempt}/${MAX_DECOMPOSE_RETRIES} failed: ${lastError.message}`);
+      console.warn(
+        `[decomposeFiles] attempt ${attempt}/${MAX_DECOMPOSE_RETRIES} failed: ${lastError.message}`,
+      );
     }
   }
-  throw new Error(`[decomposeFiles] 파일 목록 생성 ${MAX_DECOMPOSE_RETRIES}회 모두 실패: ${lastError?.message}`);
+  throw new Error(
+    `[decomposeFiles] 파일 목록 생성 ${MAX_DECOMPOSE_RETRIES}회 모두 실패: ${lastError?.message}`,
+  );
 }
 
 // ── Step 2: Execute ───────────────────────────────────────────
@@ -150,7 +176,7 @@ async function generateFile(
   allSpecs: FileSpec[],
   plan: any,
   design: any,
-  alreadyGenerated: Map<string, string>  // path → exports 시그니처
+  alreadyGenerated: Map<string, string>, // path → exports 시그니처
 ): Promise<string> {
   const context = getHarnessContext();
 
@@ -167,7 +193,7 @@ async function generateFile(
   });
 
   const relatedComponent = (design.components ?? []).find((c: any) =>
-    spec.exports.includes(c?.name ?? "____")
+    spec.exports.includes(c?.name ?? "____"),
   );
 
   const featureHint = relatedFeature
@@ -205,7 +231,7 @@ Requirements:
 - No placeholder comments like "// TODO" — implement fully
 - Imports must use .js extension for local files (ESM NodeNext)
 
-Output ONLY the raw file content.`
+Output ONLY the raw file content.`,
   );
 
   return res.trim();
@@ -216,8 +242,13 @@ Output ONLY the raw file content.`
 function writeFile(filePath: string, content: string, outputDir: string) {
   const absOutputDir = path.resolve(outputDir);
   const absPath = path.resolve(outputDir, filePath);
-  if (!absPath.startsWith(absOutputDir + path.sep) && absPath !== absOutputDir) {
-    throw new Error(`[Security] Path traversal detected: "${filePath}" escapes outputDir`);
+  if (
+    !absPath.startsWith(absOutputDir + path.sep) &&
+    absPath !== absOutputDir
+  ) {
+    throw new Error(
+      `[Security] Path traversal detected: "${filePath}" escapes outputDir`,
+    );
   }
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, content, "utf-8");
@@ -225,7 +256,11 @@ function writeFile(filePath: string, content: string, outputDir: string) {
 
 // ── 코드 요약 (Reviewer용) ────────────────────────────────────
 
-export function generateCodeSummary(filePaths: string[], plan: any, outputDir: string): string {
+export function generateCodeSummary(
+  filePaths: string[],
+  plan: any,
+  outputDir: string,
+): string {
   const lines: string[] = [];
 
   const grouped: Record<string, string[]> = {};
@@ -241,7 +276,8 @@ export function generateCodeSummary(filePaths: string[], plan: any, outputDir: s
   }
 
   const componentNames: string[] = [];
-  const compPattern = /export\s+(?:default\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9]+)/g;
+  const compPattern =
+    /export\s+(?:default\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9]+)/g;
   for (const f of filePaths) {
     if (!f.endsWith(".tsx") && !f.endsWith(".ts")) continue;
     try {
@@ -252,7 +288,9 @@ export function generateCodeSummary(filePaths: string[], plan: any, outputDir: s
         if (name && !componentNames.includes(name)) componentNames.push(name);
       }
       compPattern.lastIndex = 0;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   if (componentNames.length > 0) {
@@ -266,16 +304,24 @@ export function generateCodeSummary(filePaths: string[], plan: any, outputDir: s
     const allCode = filePaths
       .filter((f) => f.endsWith(".tsx") || f.endsWith(".ts"))
       .map((f) => {
-        try { return fs.readFileSync(path.join(outputDir, f), "utf-8"); } catch { return ""; }
+        try {
+          return fs.readFileSync(path.join(outputDir, f), "utf-8");
+        } catch {
+          return "";
+        }
       })
       .join("\n")
       .toLowerCase();
 
     for (const feature of features) {
-      const name: string = typeof feature === "string"
-        ? feature
-        : (feature as any)?.name ?? JSON.stringify(feature);
-      const keywords = name.toLowerCase().split(/\W+/).filter((k: string) => k.length > 2);
+      const name: string =
+        typeof feature === "string"
+          ? feature
+          : ((feature as any)?.name ?? JSON.stringify(feature));
+      const keywords = name
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((k: string) => k.length > 2);
       const found = keywords.some((kw: string) => allCode.includes(kw));
       lines.push(`  - ${name}: ${found ? "✅ 감지됨" : "❌ 미감지"}`);
     }
@@ -290,7 +336,7 @@ export async function developer(
   plan: any,
   design: any,
   feedback?: string,
-  outputDir: string = "./artifacts"
+  outputDir: string = "./artifacts",
 ): Promise<{
   files: string[];
   npmResult: { success: boolean; output: string };
@@ -316,7 +362,9 @@ export async function developer(
     const isConfig =
       p === "package.json" ||
       /\.(config|json|html|yaml|yml|example)$/.test(p) ||
-      /^(vite|tsconfig|tailwind|postcss|capacitor|index\.html|\.env)/.test(p.split("/").pop()!);
+      /^(vite|tsconfig|tailwind|postcss|capacitor|index\.html|\.env)/.test(
+        p.split("/").pop()!,
+      );
     if (isConfig) return 1;
 
     const isCore =
@@ -346,18 +394,32 @@ export async function developer(
       batch.map(async (spec) => {
         console.log(`  [developer]   → ${spec.path}`);
         try {
-          const content = await generateFile(spec, fileSpecs, plan, design, alreadyGenerated);
+          const content = await generateFile(
+            spec,
+            fileSpecs,
+            plan,
+            design,
+            alreadyGenerated,
+          );
           writeFile(spec.path, content, outputDir);
-          const exportsSig = spec.exports.length > 0
-            ? spec.exports.join(", ")
-            : "(config/no exports)";
+          const exportsSig =
+            spec.exports.length > 0
+              ? spec.exports.join(", ")
+              : "(config/no exports)";
           alreadyGenerated.set(spec.path, exportsSig);
           fileResults.push({ spec, content, success: true });
         } catch (err: any) {
-          console.warn(`  [developer] ⚠️  Failed: ${spec.path} — ${err?.message}`);
-          fileResults.push({ spec, content: "", success: false, error: err?.message });
+          console.warn(
+            `  [developer] ⚠️  Failed: ${spec.path} — ${err?.message}`,
+          );
+          fileResults.push({
+            spec,
+            content: "",
+            success: false,
+            error: err?.message,
+          });
         }
-      })
+      }),
     );
   };
 
@@ -373,7 +435,9 @@ export async function developer(
   await processBatch(tiers[4]!, "Tier 4 — 진입점");
 
   const successCount = fileResults.filter((r) => r.success).length;
-  console.log(`  [developer] Generated ${successCount}/${fileSpecs.length} files.`);
+  console.log(
+    `  [developer] Generated ${successCount}/${fileSpecs.length} files.`,
+  );
 
   // ── Phase 3: npm install ──────────────────────────────────────
   const npmResult = runShell("npm install --ignore-scripts", outputDir);
@@ -399,17 +463,19 @@ export async function developer(
         "ios/",
         "",
       ].join("\n"),
-      "utf-8"
+      "utf-8",
     );
   }
   runShell("git init", outputDir);
   runShell("git add -A", outputDir);
   const gitResult = runShell(
     `git commit -m "feat: initial scaffold by Developer Agent" --author="Developer Agent <agent@harness>"`,
-    outputDir
+    outputDir,
   );
 
-  console.log(`[developer] npm install: ${npmResult.success ? "ok" : "failed"}`);
+  console.log(
+    `[developer] npm install: ${npmResult.success ? "ok" : "failed"}`,
+  );
   console.log(`[developer] git commit: ${gitResult.success ? "ok" : "failed"}`);
 
   return {

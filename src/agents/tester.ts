@@ -7,18 +7,32 @@ interface TestResult {
   logs: string;
 }
 
-function runShell(cmd: string, cwd: string, timeoutMs = 180_000): { success: boolean; output: string } {
+function runShell(
+  cmd: string,
+  cwd: string,
+  timeoutMs = 180_000,
+): { success: boolean; output: string } {
   try {
-    const output = execSync(cmd, { cwd, stdio: "pipe", timeout: timeoutMs }).toString();
+    const output = execSync(cmd, {
+      cwd,
+      stdio: "pipe",
+      timeout: timeoutMs,
+    }).toString();
     return { success: true, output };
   } catch (err: any) {
     const stderr = err?.stderr?.toString() ?? "";
     const stdout = err?.stdout?.toString() ?? "";
-    return { success: false, output: [stdout, stderr].filter(Boolean).join("\n") };
+    return {
+      success: false,
+      output: [stdout, stderr].filter(Boolean).join("\n"),
+    };
   }
 }
 
-async function waitForServer(url: string, timeoutMs = 30_000): Promise<boolean> {
+async function waitForServer(
+  url: string,
+  timeoutMs = 30_000,
+): Promise<boolean> {
   const interval = 500;
   const attempts = Math.floor(timeoutMs / interval);
 
@@ -40,20 +54,30 @@ async function runWebE2E(runDir: string, logs: string[]): Promise<boolean> {
 
   logs.push("[tester:e2e] Starting vite preview server...");
 
-  const previewProc = spawn("npm", ["run", "preview", "--", "--port", String(previewPort)], {
-    cwd: runDir,
-    stdio: "pipe",
-    detached: false,
-  });
+  const previewProc = spawn(
+    "npm",
+    ["run", "preview", "--", "--port", String(previewPort)],
+    {
+      cwd: runDir,
+      stdio: "pipe",
+      detached: false,
+    },
+  );
 
   let serverOutput = "";
-  previewProc.stdout?.on("data", (d: Buffer) => { serverOutput += d.toString(); });
-  previewProc.stderr?.on("data", (d: Buffer) => { serverOutput += d.toString(); });
+  previewProc.stdout?.on("data", (d: Buffer) => {
+    serverOutput += d.toString();
+  });
+  previewProc.stderr?.on("data", (d: Buffer) => {
+    serverOutput += d.toString();
+  });
 
   try {
     const ready = await waitForServer(previewUrl, 30_000);
     if (!ready) {
-      logs.push(`[tester:e2e] Server did not start within 30s\n${serverOutput}`);
+      logs.push(
+        `[tester:e2e] Server did not start within 30s\n${serverOutput}`,
+      );
       return false;
     }
 
@@ -85,7 +109,9 @@ function runCapacitorSync(runDir: string, logs: string[]): boolean {
   const capConfigJs = path.join(runDir, "capacitor.config.js");
 
   if (!fs.existsSync(capConfig) && !fs.existsSync(capConfigJs)) {
-    logs.push("[tester:capacitor] capacitor.config.ts not found — skipping cap sync");
+    logs.push(
+      "[tester:capacitor] capacitor.config.ts not found — skipping cap sync",
+    );
     return true; // not a failure, just not configured
   }
 
@@ -102,7 +128,9 @@ function runCapacitorSync(runDir: string, logs: string[]): boolean {
   return true;
 }
 
-export async function tester(runDir: string = "./artifacts"): Promise<TestResult> {
+export async function tester(
+  runDir: string = "./artifacts",
+): Promise<TestResult> {
   const logs: string[] = [];
 
   // ── 1. package.json 존재 확인 ──────────────────────────────
@@ -118,7 +146,10 @@ export async function tester(runDir: string = "./artifacts"): Promise<TestResult
     const installResult = runShell("npm install --ignore-scripts", runDir);
     logs.push(installResult.output);
     if (!installResult.success) {
-      return { success: false, logs: `npm install failed:\n${logs.join("\n")}` };
+      return {
+        success: false,
+        logs: `npm install failed:\n${logs.join("\n")}`,
+      };
     }
   }
 

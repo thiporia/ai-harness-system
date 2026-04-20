@@ -25,7 +25,7 @@ Return ONLY this JSON, nothing else:
   "issue": "<root cause in ≤80 chars>",
   "fix": "<concrete actionable fix in ≤80 chars>"
 }
-`
+`,
   );
 
   return parseJsonResponse(res);
@@ -33,7 +33,9 @@ Return ONLY this JSON, nothing else:
 
 // ── Planner 기획 검토 ──────────────────────────────────────────
 
-export async function reviewPlan(plan: any): Promise<{ approved: boolean; feedback: string }> {
+export async function reviewPlan(
+  plan: any,
+): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
 
   // plan에서 검토에 필요한 핵심 정보만 추출 (전체 JSON 전달 금지)
@@ -69,7 +71,7 @@ Return ONLY this JSON:
   "approved": true or false,
   "feedback": "<if rejected: what to fix in ≤200 chars. If approved: 'Plan approved.'>"
 }
-`
+`,
   );
 
   return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
@@ -79,11 +81,13 @@ Return ONLY this JSON:
 
 export async function reviewCodeVsPlan(
   plan: any,
-  codeSummary: string
+  codeSummary: string,
 ): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
 
-  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
+  const featureNames = (plan.features ?? []).map(
+    (f: any) => f?.name ?? String(f),
+  );
 
   const res = await callLLMJson(
     `You are reviewing whether a plan was faithfully implemented.
@@ -104,7 +108,7 @@ Return ONLY this JSON:
   "approved": true or false,
   "feedback": "<if rejected: missing features in ≤200 chars. If approved: 'Implementation matches plan.'>"
 }
-`
+`,
   );
 
   return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
@@ -114,11 +118,13 @@ Return ONLY this JSON:
 
 export async function reviewCodeVsDesign(
   design: any,
-  codeSummary: string
+  codeSummary: string,
 ): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
 
-  const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unnamed");
+  const componentNames = (design.components ?? []).map(
+    (c: any) => c?.name ?? "unnamed",
+  );
 
   const res = await callLLMJson(
     `You are reviewing whether a component design was faithfully implemented.
@@ -139,7 +145,7 @@ Return ONLY this JSON:
   "approved": true or false,
   "feedback": "<if rejected: missing components in ≤200 chars. If approved: 'Component structure matches design.'>"
 }
-`
+`,
   );
 
   return parseJsonResponse<{ approved: boolean; feedback: string }>(res);
@@ -147,11 +153,18 @@ Return ONLY this JSON:
 
 // ── Designer 설계 검토 ────────────────────────────────────────
 
-export async function reviewDesign(plan: any, design: any): Promise<{ approved: boolean; feedback: string }> {
+export async function reviewDesign(
+  plan: any,
+  design: any,
+): Promise<{ approved: boolean; feedback: string }> {
   const context = getHarnessContext();
 
-  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f));
-  const componentNames = (design.components ?? []).map((c: any) => c?.name ?? "unnamed");
+  const featureNames = (plan.features ?? []).map(
+    (f: any) => f?.name ?? String(f),
+  );
+  const componentNames = (design.components ?? []).map(
+    (c: any) => c?.name ?? "unnamed",
+  );
 
   const res = await callLLMJson(
     `You are a critical design reviewer. Review the component design against the plan.
@@ -174,7 +187,7 @@ Return ONLY this JSON:
   "approved": true or false,
   "feedback": "<if rejected: what is missing in ≤200 chars. If approved: 'Design approved.'>"
 }
-`
+`,
   );
 
   return parseJsonResponse<{ approved: boolean; feedback: string }>(res);

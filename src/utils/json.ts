@@ -62,7 +62,7 @@ export function parseJsonResponse<T>(raw: string): T {
     if (!extracted) {
       throw new Error(
         `[parseJsonResponse] LLM did not return parseable JSON. ` +
-        `Preview: ${trimmed.slice(0, 120)}`
+          `Preview: ${trimmed.slice(0, 120)}`,
       );
     }
     try {
@@ -70,8 +70,8 @@ export function parseJsonResponse<T>(raw: string): T {
     } catch (e2) {
       throw new Error(
         `[parseJsonResponse] Extracted JSON is still invalid. ` +
-        `Error: ${(e2 as Error).message}. ` +
-        `Extracted preview: ${extracted.slice(0, 120)}`
+          `Error: ${(e2 as Error).message}. ` +
+          `Extracted preview: ${extracted.slice(0, 120)}`,
       );
     }
   }

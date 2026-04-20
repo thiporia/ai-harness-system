@@ -31,7 +31,14 @@ export interface InputContext {
 
 // ── 상수 ────────────────────────────────────────────────────────
 
-const TEXT_EXTENSIONS = new Set([".md", ".txt", ".html", ".json", ".yaml", ".yml"]);
+const TEXT_EXTENSIONS = new Set([
+  ".md",
+  ".txt",
+  ".html",
+  ".json",
+  ".yaml",
+  ".yml",
+]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const PDF_EXTENSION = ".pdf";
 
@@ -59,7 +66,9 @@ function readTextFile(filePath: string): string {
     chars += line.length + 1;
   }
 
-  return result.join("\n") + `\n\n...(file truncated at ${MAX_TEXT_CHARS} chars)`;
+  return (
+    result.join("\n") + `\n\n...(file truncated at ${MAX_TEXT_CHARS} chars)`
+  );
 }
 
 function readImageFile(filePath: string): ImageContent {
@@ -76,7 +85,9 @@ function readImageFile(filePath: string): ImageContent {
   return { mimeType, base64, filePath };
 }
 
-async function extractPdfText(filePath: string): Promise<{ text: string; success: boolean }> {
+async function extractPdfText(
+  filePath: string,
+): Promise<{ text: string; success: boolean }> {
   try {
     // pdf-parse는 선택적 의존성 — 없으면 graceful fallback
     const { default: pdfParse } = await import("pdf-parse");
@@ -121,7 +132,11 @@ function scanFolder(folderPath: string): string[] {
   return allFiles
     .filter((p) => {
       const ext = path.extname(p).toLowerCase();
-      return TEXT_EXTENSIONS.has(ext) || IMAGE_EXTENSIONS.has(ext) || ext === PDF_EXTENSION;
+      return (
+        TEXT_EXTENSIONS.has(ext) ||
+        IMAGE_EXTENSIONS.has(ext) ||
+        ext === PDF_EXTENSION
+      );
     })
     .sort((a, b) => priorityScore(b) - priorityScore(a))
     .slice(0, MAX_FOLDER_FILES);
@@ -146,7 +161,9 @@ export async function resolveInput(rawInput: string): Promise<InputContext> {
     const files = scanFolder(trimmed);
     console.log(`[input] Collected ${files.length} files from folder.`);
 
-    const texts: string[] = [`# Input from folder: ${path.basename(trimmed)}\n`];
+    const texts: string[] = [
+      `# Input from folder: ${path.basename(trimmed)}\n`,
+    ];
     const images: ImageContent[] = [];
     const sourceFiles: string[] = [];
 

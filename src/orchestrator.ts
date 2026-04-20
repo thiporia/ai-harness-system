@@ -154,7 +154,7 @@ function renderBuildReport(report: BuildReport): string {
 - **run_id**: ${report.run_id}
 - **생성 시각**: ${report.created_at}
 - **입력 컨셉**: ${report.input}
-- **ACP 통신 기록**: \`${report.acp_dir ?? "docs/agent-comms/" + report.run_id}\`
+- **ACP 통신 기록**: \`agent-comms/\` (산출물 내) | \`docs/agent-comms/${report.run_id}/\` (프로젝트 아카이브)
 
 ---
 
@@ -714,7 +714,7 @@ async function runOrchestrator(
   const inputCtx = await resolveInput(input);
 
   const report = initBuildReport(runId, inputCtx.rawInput);
-  report.acp_dir = `docs/agent-comms/${runId}`;
+  report.acp_dir = `artifacts/${runId}/agent-comms`;
 
   const isResume = !!checkpoint;
   const resumeLabel = isResume ? ` [RESUME from: ${completedStage}]` : "";
@@ -723,7 +723,7 @@ async function runOrchestrator(
   console.log(`[run: ${runId}]${resumeLabel}`);
   console.log(`Input: "${inputCtx.rawInput}" (type: ${inputCtx.type})`);
   console.log(`Output: ${runDir}`);
-  console.log(`ACP: docs/agent-comms/${runId}/`);
+  console.log(`ACP: ${runDir}/agent-comms/ + docs/agent-comms/${runId}/`);
   console.log("=".repeat(60));
 
   try {
@@ -841,7 +841,7 @@ async function runOrchestrator(
     copyToLatest(runDir);
     console.log(`\nBuild report → ${path.join(runDir, "BUILD_REPORT.md")}`);
     console.log(`Latest       → ${path.join(ARTIFACTS_DIR, "latest")}`);
-    console.log(`ACP records  → docs/agent-comms/${runId}/`);
+    console.log(`ACP records  → ${runDir}/agent-comms/ + docs/agent-comms/${runId}/`);
   }
 }
 

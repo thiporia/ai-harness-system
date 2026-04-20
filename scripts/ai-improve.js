@@ -12,7 +12,7 @@ function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
     throw new Error(
-      `Missing ${name}. Set it in .env to use ${provider.toUpperCase()} provider.`
+      `Missing ${name}. Set it in .env to use ${provider.toUpperCase()} provider.`,
     );
   }
   return value;
@@ -22,7 +22,7 @@ function buildMessages(codebase) {
   return [
     {
       role: "system",
-      content: "You are a senior engineer improving code safely."
+      content: "You are a senior engineer improving code safely.",
     },
     {
       role: "user",
@@ -38,8 +38,8 @@ Rules:
 - Do not include explanations or file headers
 
 ${codebase}
-`
-    }
+`,
+    },
   ];
 }
 
@@ -52,13 +52,13 @@ function extractOrchestratorCode(raw) {
   const content = fencedMatch ? fencedMatch[1].trim() : raw.trim();
 
   const fileMatch = content.match(
-    /\/\/\s*FILE:\s*\.\/src\/orchestrator\.ts\s*([\s\S]*)/i
+    /\/\/\s*FILE:\s*\.\/src\/orchestrator\.ts\s*([\s\S]*)/i,
   );
   const candidate = fileMatch ? fileMatch[1].trim() : content;
 
   if (!candidate.includes("runOrchestrator") && !candidate.includes("run()")) {
     throw new Error(
-      "Refusing to overwrite orchestrator.ts because the response does not look like orchestrator code."
+      "Refusing to overwrite orchestrator.ts because the response does not look like orchestrator code.",
     );
   }
 
@@ -67,12 +67,12 @@ function extractOrchestratorCode(raw) {
 
 async function callOpenAI(codebase) {
   const client = new OpenAI({
-    apiKey: requireEnv("OPENAI_API_KEY")
+    apiKey: requireEnv("OPENAI_API_KEY"),
   });
 
   const res = await client.chat.completions.create({
     model: openAIModel,
-    messages: buildMessages(codebase)
+    messages: buildMessages(codebase),
   });
 
   return res.choices[0].message.content || "";
@@ -89,20 +89,20 @@ async function callGemini(codebase) {
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: system }]
+          parts: [{ text: system }],
         },
         contents: [
           {
             role: "user",
-            parts: [{ text: user }]
-          }
-        ]
-      })
-    }
+            parts: [{ text: user }],
+          },
+        ],
+      }),
+    },
   );
 
   if (!response.ok) {
@@ -147,7 +147,9 @@ async function run() {
   }
 
   const content =
-    provider === "gemini" ? await callGemini(codebase) : await callOpenAI(codebase);
+    provider === "gemini"
+      ? await callGemini(codebase)
+      : await callOpenAI(codebase);
 
   const orchestratorCode = extractOrchestratorCode(content);
   fs.writeFileSync("./src/orchestrator.ts", orchestratorCode);

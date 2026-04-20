@@ -16,13 +16,25 @@ import path from "path";
 // ── 상수 ────────────────────────────────────────────────────────
 export const ACP_SUMMARY_MAX = 800;
 export const ACP_DETAILS_MAX = 2000;
-const ACP_BASE_DIR = "./docs/agent-comms";
+const ACP_ARCHIVE_DIR = "./docs/agent-comms"; // 프로젝트 수준 히스토리
+const ARTIFACTS_BASE = "./artifacts"; // 산출물 동봉본
 const ACP_VERSION = 1;
 
 // ── 타입 ────────────────────────────────────────────────────────
-export type AcpAgentName = "planner" | "designer" | "developer" | "tester" | "reviewer" | "orchestrator";
+export type AcpAgentName =
+  | "planner"
+  | "designer"
+  | "developer"
+  | "tester"
+  | "reviewer"
+  | "orchestrator";
 export type AcpType = "output" | "review" | "feedback";
-export type AcpStatus = "approved" | "rejected" | "success" | "failure" | "info";
+export type AcpStatus =
+  | "approved"
+  | "rejected"
+  | "success"
+  | "failure"
+  | "info";
 
 export interface AcpFrontmatter {
   from: AcpAgentName;
@@ -35,18 +47,25 @@ export interface AcpFrontmatter {
 
 export interface AcpFileData {
   frontmatter: AcpFrontmatter;
-  summary: string;      // ≤800자
-  details?: string;     // ≤2,000자 (선택)
+  summary: string; // ≤800자
+  details?: string; // ≤2,000자 (선택)
   references?: string[]; // 원본 파일 경로 목록
 }
 
 // ── 경로 헬퍼 ───────────────────────────────────────────────────
-export function acpFilePath(runId: string, filename: string): string {
-  return path.join(ACP_BASE_DIR, runId, filename);
+
+/** 산출물 내 ACP 경로 (1차 저장소) — artifacts/<run-id>/agent-comms/ */
+function artifactAcpDir(runId: string): string {
+  return path.join(ARTIFACTS_BASE, runId, "agent-comms");
 }
 
-function acpDir(runId: string): string {
-  return path.join(ACP_BASE_DIR, runId);
+/** 프로젝트 수준 ACP 아카이브 경로 — docs/agent-comms/<run-id>/ */
+function archiveAcpDir(runId: string): string {
+  return path.join(ACP_ARCHIVE_DIR, runId);
+}
+
+export function acpFilePath(runId: string, filename: string): string {
+  return path.join(artifactAcpDir(runId), filename);
 }
 
 // ── 크기 제한 유틸 ───────────────────────────────────────────────
@@ -58,12 +77,15 @@ function acpDir(runId: string): string {
  *
  * 이 함수가 경고를 출력하면 해당 LLM 프롬프트의 글자 수 제한을 강화해야 한다.
  */
-export function enforceSummaryBudget(text: string, max = ACP_SUMMARY_MAX): string {
+export function enforceSummaryBudget(
+  text: string,
+  max = ACP_SUMMARY_MAX,
+): string {
   const t = text.trim();
   if (t.length > max) {
     console.warn(
       `[ACP] ⚠️  Output exceeded budget: ${t.length}/${max} chars. ` +
-      `Tighten the char limit in the corresponding LLM prompt.`
+        `Tighten the char limit in the corresponding LLM prompt.`,
     );
   }
   return t;
@@ -73,7 +95,10 @@ export function enforceSummaryBudget(text: string, max = ACP_SUMMARY_MAX): strin
  * 보관용 절단: ACP Details 섹션처럼 LLM에 전달되지 않는 아카이브 필드에만 사용한다.
  * LLM 입력이 될 Summary에는 enforceSummaryBudget()을 사용할 것.
  */
-export function truncateForArchive(text: string, max = ACP_DETAILS_MAX): string {
+export function truncateForArchive(
+  text: string,
+  max = ACP_DETAILS_MAX,
+): string {
   const t = text.trim();
   if (t.length <= max) return t;
   return t.slice(0, max) + "\n...(archived content truncated)";
@@ -84,7 +109,10 @@ export function truncateForArchive(text: string, max = ACP_DETAILS_MAX): string 
  * (에러는 하단에 집중되므로 마지막 부분을 역방향으로 스캔)
  */
 export function extractBuildError(logs: string): string {
-  const lines = logs.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = logs
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   const errorLines: string[] = [];
 
   // error/Error/ERROR 포함 라인 우선 수집
@@ -107,10 +135,11 @@ export function extractBuildError(logs: string): string {
 export function writeAcpFile(
   runId: string,
   filename: string,
-  data: AcpFileData
+  data: AcpFileData,
 ): string {
-  const dir = acpDir(runId);
-  fs.mkdirSync(dir, { recursive: true });
+  // 1차 저장: artifacts/<run-id>/agent-comms/ (산출물과 동봉)
+  const primaryDir = artifactAcpDir(runId);
+  fs.mkdirSync(primaryDir, { recursive: true });
 
   // summary: LLM이 프롬프트 지시에 따라 이미 적합한 길이로 생성해야 함.
   // 초과 시 경고만 출력하고 원본 유지 (절단하면 다음 LLM 추론이 실패).
@@ -133,13 +162,7 @@ export function writeAcpFile(
     "---",
   ].join("\n");
 
-  const sections: string[] = [
-    frontmatter,
-    "",
-    "## Summary",
-    "",
-    summary,
-  ];
+  const sections: string[] = [frontmatter, "", "## Summary", "", summary];
 
   if (details) {
     sections.push("", "## Details", "", details);
@@ -150,14 +173,26 @@ export function writeAcpFile(
       "",
       "## References",
       "",
-      ...data.references.map((r) => `- ${r}`)
+      ...data.references.map((r) => `- ${r}`),
     );
   }
 
   const content = sections.join("\n");
-  const filePath = acpFilePath(runId, filename);
-  fs.writeFileSync(filePath, content, "utf-8");
-  return filePath;
+
+  // 산출물 내 저장 (1차)
+  const primaryPath = path.join(primaryDir, filename);
+  fs.writeFileSync(primaryPath, content, "utf-8");
+
+  // 프로젝트 수준 아카이브 저장 (2차 — 전체 히스토리 조회용)
+  try {
+    const archDir = archiveAcpDir(runId);
+    fs.mkdirSync(archDir, { recursive: true });
+    fs.writeFileSync(path.join(archDir, filename), content, "utf-8");
+  } catch {
+    // 아카이브 실패는 무시 (1차 저장이 성공했으므로)
+  }
+
+  return primaryPath;
 }
 
 // ── ACP 파일 읽기 ────────────────────────────────────────────────
@@ -201,7 +236,7 @@ export function buildPlanSummary(plan: {
   const targets = (plan.device_targets ?? []).join(", ") || "미정";
 
   return enforceSummaryBudget(
-    `Stack: ${stack}\nTargets: ${targets}\n\nFeatures:\n${features}`
+    `Stack: ${stack}\nTargets: ${targets}\n\nFeatures:\n${features}`,
   );
 }
 
@@ -213,13 +248,16 @@ export function buildDesignSummary(design: {
   design_references_used?: string[];
 }): string {
   const comps = (design.components ?? [])
-    .map((c) => `- ${c?.name ?? "unnamed"}${c?.description ? `: ${c.description}` : ""}`)
+    .map(
+      (c) =>
+        `- ${c?.name ?? "unnamed"}${c?.description ? `: ${c.description}` : ""}`,
+    )
     .join("\n");
 
   const refs = (design.design_references_used ?? []).join(", ") || "없음";
 
   return enforceSummaryBudget(
-    `Components (${design.components?.length ?? 0}):\n${comps}\n\nDesign refs: ${refs}`
+    `Components (${design.components?.length ?? 0}):\n${comps}\n\nDesign refs: ${refs}`,
   );
 }
 
@@ -229,13 +267,16 @@ export function buildDesignSummary(design: {
 export function buildDeveloperSummary(
   files: string[],
   npmSuccess: boolean,
-  gitSuccess: boolean
+  gitSuccess: boolean,
 ): string {
-  const fileList = files.slice(0, 20).map((f) => `- ${f}`).join("\n");
+  const fileList = files
+    .slice(0, 20)
+    .map((f) => `- ${f}`)
+    .join("\n");
   const extra = files.length > 20 ? `\n...(+${files.length - 20} more)` : "";
   return enforceSummaryBudget(
     `npm install: ${npmSuccess ? "✅" : "❌"} | git init: ${gitSuccess ? "✅" : "❌"}\n` +
-    `Files (${files.length}):\n${fileList}${extra}`
+      `Files (${files.length}):\n${fileList}${extra}`,
   );
 }
 
@@ -251,7 +292,10 @@ export function buildTesterSummary(success: boolean, logs: string): string {
 /**
  * Review 결과 → ACP Summary 문자열
  */
-export function buildReviewSummary(approved: boolean, feedback: string): string {
+export function buildReviewSummary(
+  approved: boolean,
+  feedback: string,
+): string {
   const status = approved ? "✅ APPROVED" : "❌ REJECTED";
   return enforceSummaryBudget(`${status}\n${feedback}`);
 }

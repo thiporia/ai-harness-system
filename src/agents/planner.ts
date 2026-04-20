@@ -35,7 +35,10 @@ interface PlanResult {
 // ── Step 1: Decompose ─────────────────────────────────────────
 // 사용자 컨셉에서 feature 이름 목록과 스택/폴더 기본값 획득 (짧은 호출)
 
-async function decomposeFeatures(ctx: InputContext, feedback?: string): Promise<{
+async function decomposeFeatures(
+  ctx: InputContext,
+  feedback?: string,
+): Promise<{
   features: string[];
   scope: { in_scope: string[]; out_of_scope: string[] };
   device_targets: string[];
@@ -108,7 +111,7 @@ async function planFeature(
   featureName: string,
   appConcept: string,
   allFeatureNames: string[],
-  stackSelected: string[]
+  stackSelected: string[],
 ): Promise<FeatureItem> {
   const context = getHarnessContext();
 
@@ -137,7 +140,7 @@ Return ONLY this JSON:
 Rules:
 - description: ≤80 chars, 1 sentence, focused only on this feature
 - acceptance_tests: 2-4 items, each ≤100 chars, Given/When/Then format
-`
+`,
   );
 
   return parseJsonResponse<FeatureItem>(res);
@@ -148,7 +151,7 @@ Rules:
 
 function aggregatePlan(
   base: Awaited<ReturnType<typeof decomposeFeatures>>,
-  features: FeatureItem[]
+  features: FeatureItem[],
 ): PlanResult {
   const acceptance_tests = features.map((f) => ({
     feature: f.name,
@@ -169,7 +172,11 @@ function aggregatePlan(
 // ── 동시성 제한 유틸 ─────────────────────────────────────────
 const CONCURRENCY_LIMIT = 3;
 
-async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, idx: number) => Promise<R>,
+): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let nextIdx = 0;
 
@@ -180,25 +187,45 @@ async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: 
     }
   }
 
-  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () =>
+    worker(),
+  );
   await Promise.all(workers);
   return results;
 }
 
 // ── Public API ────────────────────────────────────────────────
 
-export async function planner(ctx: InputContext, feedback?: string): Promise<PlanResult> {
+export async function planner(
+  ctx: InputContext,
+  feedback?: string,
+): Promise<PlanResult> {
   console.log("  [planner] Decomposing features...");
   if (ctx.images.length > 0) {
-    console.log(`  [planner] Vision mode: ${ctx.images.length} image(s) attached.`);
+    console.log(
+      `  [planner] Vision mode: ${ctx.images.length} image(s) attached.`,
+    );
   }
   const base = await decomposeFeatures(ctx, feedback);
 
-  console.log(`  [planner] Planning ${base.features.length} features individually (concurrency=${CONCURRENCY_LIMIT})...`);
-  const featureDetails = await mapWithLimit(base.features, CONCURRENCY_LIMIT, (name, i) => {
-    console.log(`  [planner] Feature ${i + 1}/${base.features.length}: "${name}"`);
-    return planFeature(name, ctx.textContent, base.features, base.stack_decision.selected);
-  });
+  console.log(
+    `  [planner] Planning ${base.features.length} features individually (concurrency=${CONCURRENCY_LIMIT})...`,
+  );
+  const featureDetails = await mapWithLimit(
+    base.features,
+    CONCURRENCY_LIMIT,
+    (name, i) => {
+      console.log(
+        `  [planner] Feature ${i + 1}/${base.features.length}: "${name}"`,
+      );
+      return planFeature(
+        name,
+        ctx.textContent,
+        base.features,
+        base.stack_decision.selected,
+      );
+    },
+  );
 
   const plan = aggregatePlan(base, featureDetails);
   console.log(`  [planner] Done — ${plan.features.length} features planned.`);

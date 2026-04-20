@@ -11,7 +11,9 @@ export interface VisionImage {
   base64: string;
 }
 
-const provider = (process.env.LLM_PROVIDER || "openai").toLowerCase() as LLMProvider;
+const provider = (
+  process.env.LLM_PROVIDER || "openai"
+).toLowerCase() as LLMProvider;
 const openAIModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
@@ -29,7 +31,7 @@ function guardCallBudget() {
   if (_llmCallCount > MAX_LLM_CALLS) {
     throw new Error(
       `[Cost Guard] LLM 호출 횟수가 상한(${MAX_LLM_CALLS})을 초과했습니다. ` +
-      `MAX_LLM_CALLS 환경변수를 늘리거나 입력을 단순화하세요.`
+        `MAX_LLM_CALLS 환경변수를 늘리거나 입력을 단순화하세요.`,
     );
   }
 }
@@ -47,10 +49,13 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
       lastError = err as Error;
       const msg = lastError.message ?? "";
       // 429 Rate Limit / 500+ 서버 에러만 재시도, 나머지는 즉시 throw
-      const isRetryable = /429|500|502|503|504|rate.?limit|timeout|ECONNRESET/i.test(msg);
+      const isRetryable =
+        /429|500|502|503|504|rate.?limit|timeout|ECONNRESET/i.test(msg);
       if (!isRetryable || attempt === MAX_RETRIES) break;
       const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1); // 1s, 2s, 4s
-      console.warn(`[${label}] attempt ${attempt}/${MAX_RETRIES} failed (${msg}). Retrying in ${delay}ms...`);
+      console.warn(
+        `[${label}] attempt ${attempt}/${MAX_RETRIES} failed (${msg}). Retrying in ${delay}ms...`,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -61,7 +66,7 @@ function requireEnv(name: string) {
   const value = process.env[name];
   if (!value) {
     throw new Error(
-      `Missing ${name}. Set it in .env to use ${provider.toUpperCase()} provider.`
+      `Missing ${name}. Set it in .env to use ${provider.toUpperCase()} provider.`,
     );
   }
   return value;
@@ -82,9 +87,9 @@ async function callOpenAI(system: string, user: string) {
     model: openAIModel,
     messages: [
       { role: "system", content: system },
-      { role: "user", content: user }
+      { role: "user", content: user },
     ],
-    temperature: 0.3
+    temperature: 0.3,
   });
 
   const content = res.choices[0]?.message?.content;
@@ -109,18 +114,18 @@ async function callGemini(system: string, user: string) {
     },
     body: JSON.stringify({
       systemInstruction: {
-        parts: [{ text: system }]
+        parts: [{ text: system }],
       },
       contents: [
         {
           role: "user",
-          parts: [{ text: user }]
-        }
+          parts: [{ text: user }],
+        },
       ],
       generationConfig: {
-        temperature: 0.3
-      }
-    })
+        temperature: 0.3,
+      },
+    }),
   });
 
   if (!response.ok) {
@@ -129,9 +134,10 @@ async function callGemini(system: string, user: string) {
   }
 
   const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts
-    ?.map((part: { text?: string }) => part.text || "")
-    .join("") || "";
+  const text =
+    data?.candidates?.[0]?.content?.parts
+      ?.map((part: { text?: string }) => part.text || "")
+      .join("") || "";
 
   if (!text) {
     throw new Error("Gemini returned an empty response.");
@@ -145,7 +151,9 @@ export async function callLLM(system: string, user: string) {
   return withRetry(() => {
     if (provider === "gemini") return callGemini(system, user);
     if (provider === "openai") return callOpenAI(system, user);
-    throw new Error(`Unsupported LLM_PROVIDER "${provider}". Use "openai" or "gemini".`);
+    throw new Error(
+      `Unsupported LLM_PROVIDER "${provider}". Use "openai" or "gemini".`,
+    );
   }, "callLLM");
 }
 
@@ -210,18 +218,27 @@ async function callGeminiJson(system: string, user: string): Promise<string> {
  * - Gemini: responseMimeType: "application/json"
  * 반환값은 항상 유효한 JSON 문자열이다.
  */
-export async function callLLMJson(system: string, user: string): Promise<string> {
+export async function callLLMJson(
+  system: string,
+  user: string,
+): Promise<string> {
   guardCallBudget();
   return withRetry(() => {
     if (provider === "gemini") return callGeminiJson(system, user);
     if (provider === "openai") return callOpenAIJson(system, user);
-    throw new Error(`Unsupported LLM_PROVIDER "${provider}". Use "openai" or "gemini".`);
+    throw new Error(
+      `Unsupported LLM_PROVIDER "${provider}". Use "openai" or "gemini".`,
+    );
   }, "callLLMJson");
 }
 
 // ── Vision API ───────────────────────────────────────────────────
 
-async function callOpenAIWithVision(system: string, user: string, images: VisionImage[]) {
+async function callOpenAIWithVision(
+  system: string,
+  user: string,
+  images: VisionImage[],
+) {
   const client = getOpenAIClient();
 
   const imageContent = images.map((img) => ({
@@ -246,7 +263,11 @@ async function callOpenAIWithVision(system: string, user: string, images: Vision
   return content;
 }
 
-async function callGeminiWithVision(system: string, user: string, images: VisionImage[]) {
+async function callGeminiWithVision(
+  system: string,
+  user: string,
+  images: VisionImage[],
+) {
   const apiKey = requireEnv("GEMINI_API_KEY");
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/` +
@@ -290,13 +311,21 @@ async function callGeminiWithVision(system: string, user: string, images: Vision
  * 이미지가 포함된 멀티모달 LLM 호출.
  * images가 비어 있으면 일반 callLLM과 동일하게 동작한다.
  */
-export async function callLLMWithVision(system: string, user: string, images: VisionImage[]) {
+export async function callLLMWithVision(
+  system: string,
+  user: string,
+  images: VisionImage[],
+) {
   if (images.length === 0) return callLLM(system, user);
 
   guardCallBudget();
   return withRetry(() => {
-    if (provider === "gemini") return callGeminiWithVision(system, user, images);
-    if (provider === "openai") return callOpenAIWithVision(system, user, images);
-    throw new Error(`Unsupported LLM_PROVIDER "${provider}". Use "openai" or "gemini".`);
+    if (provider === "gemini")
+      return callGeminiWithVision(system, user, images);
+    if (provider === "openai")
+      return callOpenAIWithVision(system, user, images);
+    throw new Error(
+      `Unsupported LLM_PROVIDER "${provider}". Use "openai" or "gemini".`,
+    );
   }, "callLLMWithVision");
 }

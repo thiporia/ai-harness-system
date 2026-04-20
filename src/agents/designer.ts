@@ -9,8 +9,10 @@ import { callLLMJson } from "../utils/openai.js";
 import { getHarnessContext } from "../utils/harness-context.js";
 import { parseJsonResponse } from "../utils/json.js";
 
-const AWESOME_DESIGN_MD_API = "https://api.github.com/repos/VoltAgent/awesome-design-md/contents/";
-const AWESOME_DESIGN_MD_RAW = "https://raw.githubusercontent.com/VoltAgent/awesome-design-md/main/";
+const AWESOME_DESIGN_MD_API =
+  "https://api.github.com/repos/VoltAgent/awesome-design-md/contents/";
+const AWESOME_DESIGN_MD_RAW =
+  "https://raw.githubusercontent.com/VoltAgent/awesome-design-md/main/";
 const MAX_DESIGN_REFS = 3;
 
 interface GithubContent {
@@ -47,16 +49,36 @@ function extractKeywords(plan: any): string[] {
     }
   }
 
-  const stopwords = new Set(["the", "a", "an", "and", "or", "for", "to", "of", "in", "with", "on", "at"]);
-  return [...new Set(keywords.filter((k) => k.length > 2 && !stopwords.has(k)))];
+  const stopwords = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "for",
+    "to",
+    "of",
+    "in",
+    "with",
+    "on",
+    "at",
+  ]);
+  return [
+    ...new Set(keywords.filter((k) => k.length > 2 && !stopwords.has(k))),
+  ];
 }
 
 function relevanceScore(filename: string, keywords: string[]): number {
   const lower = filename.toLowerCase().replace(/[-_.]/g, " ");
-  return keywords.reduce((score, kw) => (lower.includes(kw) ? score + 1 : score), 0);
+  return keywords.reduce(
+    (score, kw) => (lower.includes(kw) ? score + 1 : score),
+    0,
+  );
 }
 
-async function fetchDesignRefs(plan: any): Promise<{ refs: string; usedFiles: string[] }> {
+async function fetchDesignRefs(
+  plan: any,
+): Promise<{ refs: string; usedFiles: string[] }> {
   try {
     const res = await fetch(AWESOME_DESIGN_MD_API, {
       headers: { "User-Agent": "ai-harness-system/1.0" },
@@ -69,7 +91,9 @@ async function fetchDesignRefs(plan: any): Promise<{ refs: string; usedFiles: st
     }
 
     const contents = (await res.json()) as GithubContent[];
-    const mdFiles = contents.filter((c) => c.type === "file" && c.name.endsWith(".md"));
+    const mdFiles = contents.filter(
+      (c) => c.type === "file" && c.name.endsWith(".md"),
+    );
     const keywords = extractKeywords(plan);
 
     const scored = mdFiles
@@ -79,7 +103,9 @@ async function fetchDesignRefs(plan: any): Promise<{ refs: string; usedFiles: st
       .slice(0, MAX_DESIGN_REFS);
 
     if (scored.length === 0) {
-      mdFiles.slice(0, MAX_DESIGN_REFS).forEach((f) => scored.push({ name: f.name, score: 0 }));
+      mdFiles
+        .slice(0, MAX_DESIGN_REFS)
+        .forEach((f) => scored.push({ name: f.name, score: 0 }));
     }
 
     const refs: string[] = [];
@@ -95,7 +121,9 @@ async function fetchDesignRefs(plan: any): Promise<{ refs: string; usedFiles: st
           const lines = text.split("\n");
           // 각 ref 파일에서 앞 60줄만 (component당 호출 시 분산)
           const excerpt = lines.slice(0, 60).join("\n");
-          refs.push(`### ${name}\n${excerpt}${lines.length > 60 ? "\n...(truncated)" : ""}`);
+          refs.push(
+            `### ${name}\n${excerpt}${lines.length > 60 ? "\n...(truncated)" : ""}`,
+          );
           usedFiles.push(name);
           console.log(`[designer] Loaded design ref: ${name}`);
         }
@@ -114,9 +142,14 @@ async function fetchDesignRefs(plan: any): Promise<{ refs: string; usedFiles: st
 // ── Step 1: Decompose ─────────────────────────────────────────
 // feature 목록에서 필요한 component 이름 목록만 획득 (짧은 호출)
 
-async function decomposeComponents(plan: any, feedback?: string): Promise<string[]> {
+async function decomposeComponents(
+  plan: any,
+  feedback?: string,
+): Promise<string[]> {
   const context = getHarnessContext();
-  const featureNames = (plan.features ?? []).map((f: any) => f?.name ?? String(f)).join(", ");
+  const featureNames = (plan.features ?? [])
+    .map((f: any) => f?.name ?? String(f))
+    .join(", ");
   const feedbackSection = feedback ? `\nFeedback to address:\n${feedback}` : "";
 
   const res = await callLLMJson(
@@ -138,7 +171,7 @@ Rules:
 - ComponentName: PascalCase, ≤30 chars, no descriptions here
 - 5-15 components total
 - Each maps to one .tsx file
-`
+`,
   );
 
   const parsed = parseJsonResponse<{ components: string[] }>(res);
@@ -152,19 +185,22 @@ async function designComponent(
   componentName: string,
   plan: any,
   allComponentNames: string[],
-  designRef: string
+  designRef: string,
 ): Promise<ComponentSpec> {
   const context = getHarnessContext();
 
   // 관련 feature만 추출 (전체 plan JSON 전달 금지)
-  const relatedFeatures = (plan.features ?? [])
-    .filter((f: any) => {
-      const name = (f?.name ?? String(f)).toLowerCase();
-      return componentName.toLowerCase().includes(name.split(/\W+/)[0] ?? "") ||
-             name.includes(componentName.toLowerCase().slice(0, 5));
-    })
-    .map((f: any) => f?.name ?? String(f))
-    .join(", ") || "general UI";
+  const relatedFeatures =
+    (plan.features ?? [])
+      .filter((f: any) => {
+        const name = (f?.name ?? String(f)).toLowerCase();
+        return (
+          componentName.toLowerCase().includes(name.split(/\W+/)[0] ?? "") ||
+          name.includes(componentName.toLowerCase().slice(0, 5))
+        );
+      })
+      .map((f: any) => f?.name ?? String(f))
+      .join(", ") || "general UI";
 
   const otherComponents = allComponentNames
     .filter((n) => n !== componentName)
@@ -196,7 +232,7 @@ Rules:
 - description: ≤80 chars, 1 sentence
 - props: 3-6 items, each ≤30 chars (name: type format)
 - design_notes: ≤120 chars, 1-2 sentences, mobile-first focus
-`
+`,
   );
 
   return parseJsonResponse<ComponentSpec>(res);
@@ -206,7 +242,7 @@ Rules:
 
 function aggregateDesign(
   components: ComponentSpec[],
-  usedFiles: string[]
+  usedFiles: string[],
 ): DesignResult {
   return {
     components,
@@ -223,18 +259,24 @@ export async function designer(plan: any): Promise<DesignResult> {
     decomposeComponents(plan, plan._design_feedback),
   ]);
 
-  console.log(`  [designer] Designing ${componentNames.length} components individually...`);
+  console.log(
+    `  [designer] Designing ${componentNames.length} components individually...`,
+  );
 
   // component당 1회 LLM 호출 (순차 — 토큰 병렬 폭발 방지)
   const componentDetails: ComponentSpec[] = [];
   for (let i = 0; i < componentNames.length; i++) {
     const name = componentNames[i]!;
-    console.log(`  [designer] Component ${i + 1}/${componentNames.length}: "${name}"`);
+    console.log(
+      `  [designer] Component ${i + 1}/${componentNames.length}: "${name}"`,
+    );
     const spec = await designComponent(name, plan, componentNames, designRefs);
     componentDetails.push(spec);
   }
 
   const design = aggregateDesign(componentDetails, usedFiles);
-  console.log(`  [designer] Done — ${design.components.length} components designed.`);
+  console.log(
+    `  [designer] Done — ${design.components.length} components designed.`,
+  );
   return design;
 }

@@ -10,7 +10,12 @@ import path from "path";
 
 // ── 타입 ────────────────────────────────────────────────────────
 
-export type CompletedStage = "none" | "planner" | "designer" | "developer" | "done";
+export type CompletedStage =
+  | "none"
+  | "planner"
+  | "designer"
+  | "developer"
+  | "done";
 
 export interface Checkpoint {
   run_id: string;
@@ -33,10 +38,20 @@ function checkpointPath(runDir: string): string {
 
 // ── 저장 ────────────────────────────────────────────────────────
 
-export function saveCheckpoint(runDir: string, data: Omit<Checkpoint, "saved_at">): void {
-  const checkpoint: Checkpoint = { ...data, saved_at: new Date().toISOString() };
+export function saveCheckpoint(
+  runDir: string,
+  data: Omit<Checkpoint, "saved_at">,
+): void {
+  const checkpoint: Checkpoint = {
+    ...data,
+    saved_at: new Date().toISOString(),
+  };
   fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(checkpointPath(runDir), JSON.stringify(checkpoint, null, 2), "utf-8");
+  fs.writeFileSync(
+    checkpointPath(runDir),
+    JSON.stringify(checkpoint, null, 2),
+    "utf-8",
+  );
 }
 
 // ── 로드 ────────────────────────────────────────────────────────
@@ -57,7 +72,10 @@ export function loadCheckpoint(runDir: string): Checkpoint | null {
  * artifacts/ 아래 run-id 폴더를 최신순으로 스캔해
  * completed_stage가 "done"이 아닌 첫 번째 run-id를 반환한다.
  */
-export function findLatestIncompleteRun(): { runId: string; checkpoint: Checkpoint } | null {
+export function findLatestIncompleteRun(): {
+  runId: string;
+  checkpoint: Checkpoint;
+} | null {
   if (!fs.existsSync(ARTIFACTS_DIR)) return null;
 
   const entries = fs
@@ -80,7 +98,7 @@ export function findLatestIncompleteRun(): { runId: string; checkpoint: Checkpoi
 // ── CLI 인자 파싱 ────────────────────────────────────────────────
 
 export interface RunTarget {
-  runId: string | null;    // null이면 새 실행
+  runId: string | null; // null이면 새 실행
   resume: boolean;
   input: string;
   checkpoint: Checkpoint | null;
@@ -94,7 +112,10 @@ export interface RunTarget {
  *   node dist/orchestrator.js --resume                → 최신 미완료 run 재개
  *   node dist/orchestrator.js --resume <run-id>       → 특정 run 재개
  */
-export function resolveRunTarget(argv: string[], defaultInput: string): RunTarget {
+export function resolveRunTarget(
+  argv: string[],
+  defaultInput: string,
+): RunTarget {
   const args = argv.slice(2); // node + script 제거
   const resumeIdx = args.indexOf("--resume");
 
@@ -117,20 +138,41 @@ export function resolveRunTarget(argv: string[], defaultInput: string): RunTarge
     const runDir = path.join(ARTIFACTS_DIR, explicitRunId);
     const checkpoint = loadCheckpoint(runDir);
     if (!checkpoint) {
-      console.error(`[resume] No checkpoint found for run-id: ${explicitRunId}`);
+      console.error(
+        `[resume] No checkpoint found for run-id: ${explicitRunId}`,
+      );
       process.exit(1);
     }
-    console.log(`[resume] Resuming run: ${explicitRunId} (stage: ${checkpoint.completed_stage})`);
-    return { runId: explicitRunId, resume: true, input: checkpoint.input, checkpoint };
+    console.log(
+      `[resume] Resuming run: ${explicitRunId} (stage: ${checkpoint.completed_stage})`,
+    );
+    return {
+      runId: explicitRunId,
+      resume: true,
+      input: checkpoint.input,
+      checkpoint,
+    };
   }
 
   // 최신 미완료 run 자동 탐색
   const found = findLatestIncompleteRun();
   if (!found) {
     console.error("[resume] No incomplete run found. Starting a new run.");
-    return { runId: null, resume: false, input: defaultInput, checkpoint: null };
+    return {
+      runId: null,
+      resume: false,
+      input: defaultInput,
+      checkpoint: null,
+    };
   }
 
-  console.log(`[resume] Resuming latest incomplete run: ${found.runId} (stage: ${found.checkpoint.completed_stage})`);
-  return { runId: found.runId, resume: true, input: found.checkpoint.input, checkpoint: found.checkpoint };
+  console.log(
+    `[resume] Resuming latest incomplete run: ${found.runId} (stage: ${found.checkpoint.completed_stage})`,
+  );
+  return {
+    runId: found.runId,
+    resume: true,
+    input: found.checkpoint.input,
+    checkpoint: found.checkpoint,
+  };
 }
